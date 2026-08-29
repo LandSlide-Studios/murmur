@@ -28,35 +28,29 @@ forget about cannot record all afternoon.
 
 ### The pill
 
-A small capsule at the bottom of the screen. While Murmur is running but idle it
-sits there as a **58x12 dim sliver** — enough to answer "can I dictate right
-now?", not enough to notice while you work. Starting a session grows that same
-element to 104x24 rather than swapping it, so the change is one continuous morph.
+A narrow vertical capsule against the **right bezel**, out of the way of whatever
+you are working in. While Murmur is running but idle it sits there as a **13x66
+sliver** — enough to answer "is Murmur running and can I dictate right now?", not
+enough to notice. Starting a session grows that same element rather than swapping
+it, so the change is one continuous morph.
 
-- **Dim sliver** — armed and waiting.
-- **Blue bars** — listening. The bars track your voice.
-- **Slow pulse** — listening, but hearing silence.
-- **Amber dots** — transcribing, then cleaning up.
-- **Green tick** — done, text pasted.
-- **Red shake** — cancelled.
+| State | Looks like |
+|---|---|
+| Armed | Thin dim sliver with slowly breathing dots |
+| Listening | 34x150, eleven bars whose length tracks your voice |
+| Hands-free | The same, 208 tall — size is what tells the two modes apart |
+| Transcribing / cleaning up | Amber dots travelling up the capsule |
+| Done | Green tick, then it shrinks back to the sliver |
+| Cancelled | Red bar and a nudge |
 
-Labelled states size themselves to their text, so nothing sits in a half-empty
-capsule. It is click-through and never takes focus, so it cannot swallow the paste.
+There is no text. State is carried by size, colour and motion, which is legible
+from the corner of your eye in a way an 8pt word is not.
 
-Set `ui.idle_indicator` to `false` if you would rather see nothing between
-dictations. Pausing **Listening** from the tray hides it too — the indicator is
+It is click-through and never takes focus, so it cannot swallow the paste.
+
+`ui.pill_offset_px` is the gap from the right edge; `ui.idle_indicator` turns the
+sliver off. Pausing **Listening** from the tray hides it too — the indicator is
 the honest answer to whether the hotkeys are live.
-
-### Sounds
-
-A short rising tone when a dictation starts, a two-note resolve when the text
-lands, and a falling tone if you cancel. Turn them off with `sound.enabled`.
-
-The speakers are audible to your microphone, and Whisper invents words from
-non-speech — a recording of nothing but the cue tones transcribed to "Thanks."
-So capture is muted for the length of each cue plus a margin. The 400ms pre-roll
-already holds everything said before the chord went down, so the mute only
-covers the moment the keys are being pressed.
 
 ---
 
@@ -175,7 +169,7 @@ what you changed is written back, so upgrades keep reaching you.
 | `learning.promote_after_hits` | `2` | Sightings before an automatic correction applies. |
 | `sound.enabled` | `true` | Start / done / cancel tones. |
 | `ui.idle_indicator` | `true` | Show the dim sliver between dictations. |
-| `ui.pill_offset_px` | `48` | Height above the taskbar. |
+| `ui.pill_offset_px` | `12` | Gap between the pill and the right edge. |
 | `autostart` | `true` | Launch at login. |
 
 ### Using a cloud backend instead

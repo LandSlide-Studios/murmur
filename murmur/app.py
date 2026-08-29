@@ -141,9 +141,26 @@ class MurmurApp:
             return self._stt
 
     def preload(self) -> None:
-        """Warm the model off the UI thread so the first dictation is not slow."""
-        threading.Thread(target=lambda: self.stt, daemon=True,
-                         name="murmur-preload").start()
+        """Warm both models off the UI thread so the first dictation is not slow.
+
+        The speech model is a multi-second load. The cleanup model is worse in a
+        subtler way: Ollama unloads it when idle, so the first real dictation
+        paid the load cost inside the polish timeout and fell back to the raw
+        transcript. A tiny warm-up request keeps that off the user's first
+        sentence.
+        """
+        def warm():
+            try:
+                _ = self.stt
+            except Exception:
+                log.exception("could not preload the speech model")
+            try:
+                if self.polisher.enabled:
+                    self.polisher.polish("warm up", glossary=None)
+            except Exception:
+                log.debug("cleanup model warm-up failed", exc_info=True)
+
+        threading.Thread(target=warm, daemon=True, name="murmur-preload").start()
 
     # --- session transitions (UI thread) -----------------------------------
 

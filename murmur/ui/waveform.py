@@ -10,15 +10,15 @@ import math
 from .motion import Spring
 
 FLOOR = 0.08          # idle height, so the pill never looks dead
-_GAIN = 6.0           # mic RMS is small; scale it into 0..1
+_GAIN = 9.0           # mic RMS is small; scale it into 0..1
 _BREATHE_HZ = 0.4
 
 # Each bar gets its own oscillator frequency and phase. Sharing one frequency
 # (with only a phase offset) makes the row move in lockstep and read as a
 # barcode; mutually non-harmonic rates keep the bars visibly independent at
 # every instant, which is what makes it look like a voice.
-_FREQS = (7.3, 11.9, 9.1, 13.7, 8.3, 12.1, 10.7)
-_PHASES = (0.0, 2.1, 4.3, 1.2, 5.4, 3.3, 0.7)
+_FREQS = (7.3, 11.9, 9.1, 13.7, 8.3, 12.1, 10.7, 9.7, 12.9)
+_PHASES = (0.0, 2.1, 4.3, 1.2, 5.4, 3.3, 0.7, 2.8, 4.9)
 
 
 class BarModel:
@@ -46,10 +46,11 @@ class BarModel:
             freq = _FREQS[i % len(_FREQS)]
             phase = _PHASES[i % len(_PHASES)]
             # Centre bars run taller, as on a real level meter.
-            centre = 1.0 - 0.28 * (abs(i - mid) / mid if mid else 0.0)
-            # Deep modulation: 0.45..1.0 of the driven height, so neighbouring
-            # bars can differ by more than 2x at any given frame.
-            osc = 0.72 + 0.42 * math.sin(self.t * freq + phase)
+            centre = 1.0 - 0.34 * (abs(i - mid) / mid if mid else 0.0)
+            # Deep modulation: neighbouring bars differ by roughly 4x at any
+            # given frame. A shallower swing reads as a shimmer rather than as
+            # something responding to a voice.
+            osc = 0.58 + 0.62 * math.sin(self.t * freq + phase)
             s.target = max(FLOOR, min(1.0, norm * centre * osc))
             s.step(dt)
             s.value = max(0.0, min(1.0, s.value))

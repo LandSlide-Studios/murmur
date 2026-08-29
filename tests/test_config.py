@@ -116,7 +116,7 @@ def test_valid_values_survive_validation(tmp_path):
 def test_bool_is_not_accepted_where_a_number_belongs(tmp_path):
     p = tmp_path / "settings.json"
     p.write_text(json.dumps({"ui": {"pill_offset_px": True}}))
-    assert Config.load(p).get("ui.pill_offset_px") == 48
+    assert Config.load(p).get("ui.pill_offset_px") == 12
 
 
 # --- I7: save() must not freeze today's defaults into the user's file ---

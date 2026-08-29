@@ -2,6 +2,50 @@
 
 Newest first. What shipped, what failed, and why.
 
+## 2026-08-29 (evening) — vertical pill on the right bezel
+
+Tommy reported no running-indicator at all. **It was not a bug in the feature —
+his instance had launched at 13:39 and the indicator shipped at 17:55.** He was
+running a build from before it existed. Worth recording because the obvious
+diagnosis (the indicator is too subtle) would have led to changing working code.
+
+Reoriented the pill to a vertical capsule against the right bezel:
+
+| State | Size |
+|---|---|
+| Armed | 13 x 66, dim, breathing dots |
+| Listening | 34 x 150, eleven bars |
+| Hands-free | 34 x 208 |
+| Transcribing / cleaning up | 34 x 126, amber dots travelling up |
+| Done | 34 x 92 |
+
+**Text labels are gone.** A vertical capsule cannot hold horizontal text, and
+rotating it would be worse than useless. State is now size, colour and motion —
+hands-free is simply taller than push-to-talk, which is legible peripherally in
+a way an 8pt word never was.
+
+**The waveform is deliberately exaggerated.** Modulation went from 0.72±0.42 to
+0.58±0.62 and gain from 6 to 9, so neighbouring bars differ by roughly 4x at any
+frame. The previous swing read as a shimmer rather than as something responding
+to a voice.
+
+**Two things the renders caught:**
+
+1. *Bars clustered in the middle of a tall capsule*, leaving dead space at both
+   ends. Spacing is now derived from the available height, so the same code
+   fills a 208px hands-free pill and a 66px sliver at the right density.
+2. *The armed indicator was washed out.* One painter opacity dimmed the accent
+   along with the capsule. The accent is now lifted above it — checked against
+   light, mid and dark backgrounds, since dark-on-dark is the worst case and a
+   dark test background had been flattering it.
+
+**Also fixed from the log:** a real dictation at 17:33 hit
+`polish failed after 5.2s ... timed out`. Ollama unloads an idle model, so the
+first dictation was paying the load cost inside the timeout and falling back to
+the raw transcript. Both models are now warmed at startup.
+
+263 unit tests, 17/17 system checks.
+
 ## 2026-08-29 (later still) — slimmer pill, and a persistent armed indicator
 
 The capsule was 140x36, which read as chunky next to Wispr Flow's. Now:

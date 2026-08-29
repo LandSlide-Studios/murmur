@@ -6,7 +6,8 @@ import pytest
 
 from PySide6.QtWidgets import QApplication
 
-from murmur.ui.pill import IDLE_SIZE, REC_SIZE, Pill
+from murmur.ui.pill import (DONE_SIZE, IDLE_SIZE, REC_SIZE,
+                            TOGGLE_SIZE, WORK_SIZE, Pill)
 
 
 @pytest.fixture(scope="module")
@@ -31,15 +32,40 @@ def test_the_armed_indicator_is_small_and_dim(pill):
     pill.set_state("armed")
     settle(pill)
     assert (round(pill.width_s.value), round(pill.height_s.value)) == IDLE_SIZE
-    assert 0.1 < pill.opacity.value < 0.6, "the idle indicator must be unobtrusive"
+    assert 0.3 < pill.opacity.value < 0.8, "visible at a glance, easy to ignore"
 
 
-def test_recording_is_slimmer_than_the_old_pill(pill):
-    """The old capsule was 140x36; Wispr-style is a good deal slimmer."""
+def test_the_armed_indicator_is_the_smallest_state(pill):
+    """It has to read as 'running', not as 'something is happening'."""
+    from murmur.ui.pill import REC_SIZE, TOGGLE_SIZE, WORK_SIZE
+
+    for other in (REC_SIZE, TOGGLE_SIZE, WORK_SIZE):
+        assert IDLE_SIZE[0] < other[0]
+        assert IDLE_SIZE[1] < other[1]
+
+
+def test_the_pill_is_vertical(pill):
+    """Docked against the right bezel, so it is taller than it is wide."""
     pill.set_state("recording", "hold")
     settle(pill)
-    assert round(pill.height_s.value) == REC_SIZE[1] <= 26
-    assert round(pill.width_s.value) == REC_SIZE[0] <= 110
+    assert round(pill.width_s.value) == REC_SIZE[0]
+    assert round(pill.height_s.value) == REC_SIZE[1]
+    assert REC_SIZE[1] > REC_SIZE[0] * 3, "should read as a vertical bar"
+
+
+def test_the_armed_sliver_is_vertical_too(pill):
+    assert IDLE_SIZE[1] > IDLE_SIZE[0] * 3
+    assert IDLE_SIZE[0] < REC_SIZE[0], "the sliver must be narrower than active"
+
+
+def test_it_sits_against_the_right_edge(pill, qapp):
+    from PySide6.QtGui import QGuiApplication
+
+    pill.set_state("armed")
+    settle(pill, 60)
+    geo = QGuiApplication.primaryScreen().availableGeometry()
+    # The window spans the gap; the capsule is drawn at its right edge.
+    assert pill.x() + pill.width() >= geo.right() - 2
 
 
 def test_idle_maps_to_the_armed_indicator_not_to_hidden(pill):
@@ -57,20 +83,35 @@ def test_idle_hides_entirely_when_the_indicator_is_switched_off(qapp):
     p.hide()
 
 
-def test_labelled_states_size_themselves_to_their_text(pill):
-    pill.set_state("transcribing")
-    transcribing = pill._target_size()[0]
-    pill.set_state("copied")
-    copied = pill._target_size()[0]
-    assert copied > transcribing, "a longer label needs a wider capsule"
-    assert transcribing > REC_SIZE[0], "a label needs more room than bars alone"
-
-
-def test_hands_free_is_wider_than_plain_recording(pill):
+def test_hands_free_is_taller_than_push_to_talk(pill):
+    """With no text label, size is what distinguishes a session you can walk
+    away from."""
     pill.set_state("recording", "hold")
-    plain = pill._target_size()[0]
+    plain = pill._target_size()[1]
     pill.set_state("recording", "toggle")
-    assert pill._target_size()[0] > plain
+    assert pill._target_size()[1] > plain
+    assert TOGGLE_SIZE[1] > REC_SIZE[1]
+
+
+def test_working_states_have_their_own_size(pill):
+    pill.set_state("transcribing")
+    assert pill._target_size() == WORK_SIZE
+    pill.set_state("polishing")
+    assert pill._target_size() == WORK_SIZE
+
+
+def test_the_cleaning_up_state_exists_and_is_amber(pill):
+    """Tommy asked for the cleaning-up dots specifically."""
+    from murmur.ui.pill import ACCENT
+
+    assert "polishing" in ACCENT
+    assert ACCENT["polishing"].name().lower() == "#e8b84b"
+    assert ACCENT["transcribing"] == ACCENT["polishing"]
+
+
+def test_terminal_states_shrink(pill):
+    pill.set_state("done")
+    assert pill._target_size() == DONE_SIZE
 
 
 def test_a_finished_session_returns_to_the_armed_indicator(pill):

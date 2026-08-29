@@ -24,14 +24,14 @@ def advance(frames, level=0.0):
         pill._tick()
 
 
-def shot(name, bg="#1B1D22", zoom=3):
+def shot(name, bg="#1B1D22", zoom=2):
     img = QImage(pill.size(), QImage.Format_ARGB32_Premultiplied)
     img.fill(QColor(bg))
     p = QPainter(img)
     pill.render(p, pill.rect().topLeft())
     p.end()
     w, h = pill.width(), pill.height()
-    crop = img.copy(QRect(int(w / 2 - 110), int(h / 2 - 22), 220, 44))
+    crop = img.copy(QRect(w - 92, int(h / 2 - 110), 92, 220))
     crop = crop.scaled(crop.width() * zoom, crop.height() * zoom,
                        Qt.KeepAspectRatio, Qt.SmoothTransformation)
     crop.save(str(OUT / f"pill-{name}.png"))
@@ -58,6 +58,10 @@ shot("03-recording-handsfree")
 pill.set_state("transcribing")
 advance(45)
 shot("05-transcribing")
+
+pill.set_state("polishing")
+advance(45)
+shot("05b-cleaning-up")
 
 pill.set_state("done")
 advance(24)
