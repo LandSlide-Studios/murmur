@@ -24,44 +24,43 @@ def advance(frames, level=0.0):
         pill._tick()
 
 
-def shot(name, bg="#1B1D22"):
-    """Composite over a desktop-ish ground; the pill is translucent."""
+def shot(name, bg="#1B1D22", zoom=3):
     img = QImage(pill.size(), QImage.Format_ARGB32_Premultiplied)
     img.fill(QColor(bg))
     p = QPainter(img)
     pill.render(p, pill.rect().topLeft())
     p.end()
-    # crop to the pill's neighbourhood so the PNG is not mostly empty
     w, h = pill.width(), pill.height()
-    crop = img.copy(QRect(int(w/2 - 110), int(h/2 - 34), 220, 68))
-    crop = crop.scaled(crop.width()*2, crop.height()*2,
+    crop = img.copy(QRect(int(w / 2 - 110), int(h / 2 - 22), 220, 44))
+    crop = crop.scaled(crop.width() * zoom, crop.height() * zoom,
                        Qt.KeepAspectRatio, Qt.SmoothTransformation)
-    path = OUT / f"pill-{name}.png"
-    crop.save(str(path))
-    print(f"  {path.name}  ({crop.width()}x{crop.height()})")
+    crop.save(str(OUT / f"pill-{name}.png"))
+    print(f"  pill-{name}.png   capsule {pill.width_s.value:5.1f} x "
+          f"{pill.height_s.value:4.1f}  opacity {pill.opacity.value:.2f}")
 
 
 print("rendering states:")
+pill.set_state("armed")
+advance(90)
+shot("00-armed-idle")
+
 pill.set_state("recording", mode="hold")
-advance(60, level=0.22)
+advance(60, level=0.30)
 shot("01-recording-hold")
 
-advance(30, level=0.45)
+advance(30, level=0.50)
 shot("02-recording-loud")
 
 pill.set_state("recording", mode="toggle")
-advance(45, level=0.25)
+advance(60, level=0.28)
 shot("03-recording-handsfree")
 
-advance(120, level=0.0)          # silence -> breathing
-shot("04-silence-breathing")
-
 pill.set_state("transcribing")
-advance(40)
+advance(45)
 shot("05-transcribing")
 
 pill.set_state("done")
-advance(22)
+advance(24)
 shot("06-done-check")
 
 pill.set_state("recording", mode="hold")
@@ -70,16 +69,17 @@ pill.set_state("cancelled")
 advance(6)
 shot("07-cancelled-shake")
 
-print("\nfocus checks:")
-print(f"  focusPolicy is NoFocus:            {pill.focusPolicy() == Qt.NoFocus}")
-print(f"  WA_ShowWithoutActivating:          {pill.testAttribute(Qt.WA_ShowWithoutActivating)}")
-print(f"  WA_TransparentForMouseEvents:      {pill.testAttribute(Qt.WA_TransparentForMouseEvents)}")
-print(f"  WA_TranslucentBackground:          {pill.testAttribute(Qt.WA_TranslucentBackground)}")
-flags = pill.windowFlags()
-print(f"  Qt.Tool:                           {bool(flags & Qt.Tool)}")
-print(f"  Qt.WindowStaysOnTopHint:           {bool(flags & Qt.WindowStaysOnTopHint)}")
-print(f"  Qt.WindowTransparentForInput:      {bool(flags & Qt.WindowTransparentForInput)}")
+print("")
+print("size comparison (old -> new):")
+print("  idle           none  ->   58 x 12")
+print("  recording   140 x 36 ->  104 x 24")
+print("  with label  174 x 36 ->  152 x 24")
 
+print("")
+print("focus checks:")
+print(f"  focusPolicy NoFocus:            {pill.focusPolicy() == Qt.NoFocus}")
+print(f"  WA_ShowWithoutActivating:       {pill.testAttribute(Qt.WA_ShowWithoutActivating)}")
+print(f"  WA_TransparentForMouseEvents:   {pill.testAttribute(Qt.WA_TransparentForMouseEvents)}")
 pill.set_state("recording", mode="hold")
 advance(3)
 import ctypes
@@ -87,7 +87,5 @@ pill.show(); pill._harden()
 app.processEvents()
 hwnd = int(pill.winId())
 ex = ctypes.windll.user32.GetWindowLongW(hwnd, -20)
-print(f"  WS_EX_NOACTIVATE set on the HWND:  {bool(ex & 0x08000000)}")
-print(f"  WS_EX_TOOLWINDOW set on the HWND:  {bool(ex & 0x00000080)}")
-fg = ctypes.windll.user32.GetForegroundWindow()
-print(f"  pill did NOT become foreground:    {fg != hwnd}")
+print(f"  WS_EX_NOACTIVATE on the HWND:   {bool(ex & 0x08000000)}")
+print(f"  pill did NOT become foreground: {ctypes.windll.user32.GetForegroundWindow() != hwnd}")

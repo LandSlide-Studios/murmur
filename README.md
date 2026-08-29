@@ -28,15 +28,24 @@ forget about cannot record all afternoon.
 
 ### The pill
 
-A small capsule appears at the bottom of the screen while Murmur is working:
+A small capsule at the bottom of the screen. While Murmur is running but idle it
+sits there as a **58x12 dim sliver** — enough to answer "can I dictate right
+now?", not enough to notice while you work. Starting a session grows that same
+element to 104x24 rather than swapping it, so the change is one continuous morph.
 
+- **Dim sliver** — armed and waiting.
 - **Blue bars** — listening. The bars track your voice.
 - **Slow pulse** — listening, but hearing silence.
 - **Amber dots** — transcribing, then cleaning up.
 - **Green tick** — done, text pasted.
 - **Red shake** — cancelled.
 
-It is click-through and never takes focus, so it cannot swallow the paste.
+Labelled states size themselves to their text, so nothing sits in a half-empty
+capsule. It is click-through and never takes focus, so it cannot swallow the paste.
+
+Set `ui.idle_indicator` to `false` if you would rather see nothing between
+dictations. Pausing **Listening** from the tray hides it too — the indicator is
+the honest answer to whether the hotkeys are live.
 
 ### Sounds
 
@@ -165,6 +174,7 @@ what you changed is written back, so upgrades keep reaching you.
 | `learning.enabled` | `true` | Vocabulary learning. |
 | `learning.promote_after_hits` | `2` | Sightings before an automatic correction applies. |
 | `sound.enabled` | `true` | Start / done / cancel tones. |
+| `ui.idle_indicator` | `true` | Show the dim sliver between dictations. |
 | `ui.pill_offset_px` | `48` | Height above the taskbar. |
 | `autostart` | `true` | Launch at login. |
 

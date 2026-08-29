@@ -108,7 +108,8 @@ def main() -> int:
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName("Murmur")
 
-    pill = Pill(offset_px=cfg.get("ui.pill_offset_px"))
+    pill = Pill(offset_px=cfg.get("ui.pill_offset_px"),
+                show_when_idle=cfg.get("ui.idle_indicator", True))
     murmur = MurmurApp(cfg, on_state=UiBridge(pill))
 
     try:
@@ -149,13 +150,20 @@ def main() -> int:
         w.activateWindow()
 
     def quit_app():
+        pill.set_state("off")
         murmur.stop()
         app.quit()
+
+    def on_listening(active: bool):
+        # The indicator is the honest answer to "can I dictate right now?", so
+        # it must disappear the moment the hotkeys are paused.
+        pill.set_state("armed" if active else "off")
 
     from .ui.tray import Tray
 
     tray = Tray(murmur, show_history, show_vocab, quit_app,
-                autostart_command=autostart.default_command())
+                autostart_command=autostart.default_command(),
+                on_listening=on_listening)
 
     # First run honours the configured default; after that the tray checkbox
     # is the source of truth and the config is not re-applied.
@@ -177,6 +185,8 @@ def main() -> int:
     slow.timeout.connect(murmur.corrections.poll)
     slow.timeout.connect(watcher.poll)
     slow.start(2000)
+
+    pill.set_state("armed")
 
     log.info("Murmur ready - hold Ctrl+Win to dictate, "
              "Ctrl+Win+Space for hands-free, Esc to cancel")

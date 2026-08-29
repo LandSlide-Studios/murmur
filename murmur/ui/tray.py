@@ -47,10 +47,11 @@ def _icon(active: bool) -> QIcon:
 
 class Tray(QSystemTrayIcon):
     def __init__(self, app, on_history, on_vocab, on_quit,
-                 autostart_command=None):
+                 autostart_command=None, on_listening=None):
         super().__init__(_icon(True))
         self.app = app
         self._autostart_command = autostart_command
+        self._on_listening = on_listening
 
         menu = QMenu()
 
@@ -99,6 +100,8 @@ class Tray(QSystemTrayIcon):
             return
         self.setIcon(_icon(on))
         self._refresh_tooltip(on)
+        if self._on_listening is not None:
+            self._on_listening(on)
 
     def _toggle_autostart(self, on: bool) -> None:
         if not autostart.set_enabled(on, self._autostart_command):

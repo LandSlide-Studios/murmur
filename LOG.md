@@ -2,6 +2,41 @@
 
 Newest first. What shipped, what failed, and why.
 
+## 2026-08-29 (later still) — slimmer pill, and a persistent armed indicator
+
+The capsule was 140x36, which read as chunky next to Wispr Flow's. Now:
+
+| State | Was | Now |
+|---|---|---|
+| Idle | nothing | 58 x 12, dim |
+| Recording | 140 x 36 | 104 x 24 |
+| Labelled | 174 x 36 fixed | sized to the text (114-166) |
+
+**The armed indicator is the substantive change.** Between dictations the pill
+stays on screen as a small dim sliver rather than disappearing, so the question
+"can I dictate right now?" always has a visible answer. It is the *same* widget,
+so starting a session grows it rather than swapping graphics — the bars are the
+same waveform at a smaller scale, and the springs already animate size, so the
+transition came almost free. Pausing Listening from the tray hides it, which
+keeps the indicator honest.
+
+**Two defects the render caught:**
+
+1. *The sweep trail escaped the capsule.* The transcribing dots were drawn from
+   `left + 12` backwards, so the tail sat outside the pill as loose dots on the
+   desktop. Everything is now clipped to the capsule path, which makes that class
+   of bug impossible rather than just fixing this instance.
+2. *Labelled states had a third of the capsule empty.* A fixed width cannot suit
+   both "hands-free" and "copied - press Ctrl+V", so labelled states now measure
+   their own text.
+
+The pill also had **no tests at all** before this — it had only ever been checked
+by looking at renders. It now has 11 covering sizing, the idle mapping, the
+morph being animated rather than instant, the return to armed after every
+terminal state, and the focus guards.
+
+258 unit tests, 17/17 system checks.
+
 ## 2026-08-29 (later still) — audio cues, and scrubbed for a public repo
 
 **Cues added:** a rising tone on start, a two-note resolve on delivery, a falling

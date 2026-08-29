@@ -1,6 +1,9 @@
 """The floating status pill.
 
-Small and sleek: ~140x36px, bottom-centre, above the taskbar.
+Slim by default. When nothing is happening it sits at the bottom of the screen
+as a small dim capsule — enough to tell you dictation is armed, not enough to
+notice while you work. Starting a session grows the same element rather than
+swapping it, so the transition is one continuous morph.
 
 Two hard constraints, both from CLAUDE.md:
 
@@ -25,13 +28,21 @@ from PySide6.QtWidgets import QWidget
 from .motion import Spring
 from .waveform import BarModel
 
-W, H, RADIUS = 140, 36, 18
-TOGGLE_EXTRA = 34            # hands-free pill is wider, to fit the label
+# (width, height) per state. The capsule radius is always height/2, so it stays
+# a true pill at every size and the morph between them reads as one object.
+IDLE_SIZE = (58, 12)
+REC_SIZE = (104, 24)
+# Labelled states size themselves to the text; these are the fixed parts.
+LABEL_LEAD = 44      # space before the text, holding the bars or the sweep
+LABEL_TRAIL = 14     # breathing room after it
+
+IDLE_OPACITY = 0.34
 
 BODY = QColor(14, 14, 16, 235)
 HAIRLINE = QColor(255, 255, 255, 20)
 
 ACCENT = {
+    "armed": QColor("#5B8DEF"),
     "recording": QColor("#5B8DEF"),
     "transcribing": QColor("#E8B84B"),
     "polishing": QColor("#E8B84B"),
@@ -49,13 +60,16 @@ LABEL = {
 }
 
 ACTIVE = ("recording", "transcribing", "polishing")
+TERMINAL = ("done", "copied", "cancelled", "error")
+
 GWL_EXSTYLE = -20
 WS_EX_NOACTIVATE = 0x08000000
 WS_EX_TOOLWINDOW = 0x00000080
 
 
 class Pill(QWidget):
-    def __init__(self, offset_px: int = 48, parent=None):
+    def __init__(self, offset_px: int = 48, show_when_idle: bool = True,
+                 parent=None):
         super().__init__(
             parent,
             Qt.FramelessWindowHint
@@ -69,26 +83,27 @@ class Pill(QWidget):
         self.setFocusPolicy(Qt.NoFocus)
 
         self.offset_px = offset_px
-        self.state = "idle"
+        self.show_when_idle = show_when_idle
+        self.state = "off"
         self.mode = "hold"
         self.level = 0.0
 
         self.bars = BarModel(n=5)
         self.opacity = Spring(0.0, stiffness=200, damping=24)
-        self.scale = Spring(0.86, stiffness=220, damping=20)
-        self.rise = Spring(12.0, stiffness=200, damping=24)
-        self.width_s = Spring(float(W), stiffness=190, damping=24)
+        self.width_s = Spring(float(IDLE_SIZE[0]), stiffness=190, damping=23)
+        self.height_s = Spring(float(IDLE_SIZE[1]), stiffness=190, damping=23)
+        self.rise = Spring(10.0, stiffness=200, damping=24)
         self.check = Spring(0.0, stiffness=200, damping=18)
 
         self.sweep = 0.0
         self.shake = 0.0
-        self._done_frames = 0
+        self._hold_frames = 0
         self._hardened = False
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
-        # Generous canvas: the pill scales, shakes and rises inside it.
-        self.resize(W * 2, H * 3)
+        # Canvas big enough for the widest label plus shake and rise headroom.
+        self.resize(280, REC_SIZE[1] + 48)
 
     # --- window plumbing --------------------------------------------------
 
@@ -96,9 +111,8 @@ class Pill(QWidget):
         """Bottom-centre of the screen the user is actually working on.
 
         A top-level widget that has never been moved reports the PRIMARY screen,
-        so a pill placed from self.screen() always appeared on monitor 1 no
-        matter where the focused window was. Follow the cursor instead, which is
-        where the user is looking, and re-place on every appearance.
+        so placing from self.screen() put the pill on monitor 1 regardless of
+        where the focused window was. Follow the cursor instead.
         """
         screen = None
         try:
@@ -150,65 +164,98 @@ class Pill(QWidget):
         slot; calling set_state directly across threads corrupts painting."""
         self.set_state(state, mode or None)
 
+    def _label_for(self, state: str) -> str:
+        if state in LABEL:
+            return LABEL[state]
+        if state == "recording" and self.mode == "toggle":
+            return "hands-free"
+        return ""
+
+    def _target_size(self) -> tuple[int, int]:
+        if self.state == "armed":
+            return IDLE_SIZE
+        text = self._label_for(self.state)
+        if not text:
+            return REC_SIZE
+        # Size to the text rather than a fixed width, or "hands-free" leaves a
+        # third of the capsule empty while "copied - press Ctrl+V" overflows it.
+        from PySide6.QtGui import QFontMetrics
+
+        f = QFont("Segoe UI", 8)
+        f.setWeight(QFont.Medium)
+        width = LABEL_LEAD + QFontMetrics(f).horizontalAdvance(text) + LABEL_TRAIL
+        return (int(width), REC_SIZE[1])
+
+    def _retarget(self) -> None:
+        w, h = self._target_size()
+        self.width_s.target = float(w)
+        self.height_s.target = float(h)
+
     def set_state(self, state: str, mode: str | None = None) -> None:
+        # "idle" from the session layer means "no dictation running", which is
+        # the armed indicator rather than nothing at all.
+        if state == "idle":
+            state = "armed" if self.show_when_idle else "off"
         if mode:
             self.mode = mode
         if state == self.state:
-            self._retarget_width()
+            self._retarget()
             return
         self.state = state
 
-        if state in ACTIVE:
+        if state == "off":
+            self.opacity.target = 0.0
+            return
+
+        if not self.isVisible():
+            self.opacity.snap_to(0.0)
+            self.rise.snap_to(10.0)
+            self.width_s.snap_to(float(IDLE_SIZE[0]))
+            self.height_s.snap_to(float(IDLE_SIZE[1]))
+            self._place()
+            self.show()
+            self._harden()
+        else:
             self._place()          # the focused monitor may have changed
-            if not self.isVisible():
-                # Fresh appearance: start small, low and transparent so the
-                # springs have somewhere to travel from.
-                self.opacity.snap_to(0.0)
-                self.scale.snap_to(0.86)
-                self.rise.snap_to(12.0)
-                self._place()
-                self.show()
-                self._harden()
-            self.opacity.target = 1.0
-            self.scale.target = 1.0
-            self.rise.target = 0.0
+
+        if not self._timer.isActive():
+            self._timer.start(16)
+
+        self.rise.target = 0.0
+        self._retarget()
+        self._hold_frames = 0
+
+        if state == "armed":
+            self.opacity.target = IDLE_OPACITY
             self.check.target = 0.0
-            self._retarget_width()
-            if not self._timer.isActive():
-                self._timer.start(16)
-        elif state == "done":
+        elif state in ACTIVE:
+            self.opacity.target = 1.0
+            self.check.target = 0.0
+        elif state in ("done", "copied"):
             # Hold full opacity while the tick strokes itself on; _tick starts
-            # the fade once it has actually been drawn. Fading concurrently
-            # made the confirmation almost invisible.
+            # the return to armed once it has actually been drawn.
             self.check.snap_to(0.0)
             self.check.target = 1.0
             self.opacity.target = 1.0
-            self.scale.target = 1.0
-        elif state == "copied":
-            # Modifiers were still held so the paste was withheld. Hold this
-            # longer than the tick: the user has to act on it.
-            self.opacity.target = 1.0
-            self.scale.target = 1.0
-            self.check.snap_to(0.0)
-            self._retarget_width()
-        elif state in ("cancelled", "error"):
+        else:                                   # cancelled / error
             self.shake = 1.0
-            self.opacity.target = 0.0
-            self.scale.target = 0.94
-        else:                                   # idle
-            self.opacity.target = 0.0
-            self.scale.target = 0.94
-
-    def _retarget_width(self) -> None:
-        wide = self.state in ACTIVE and (
-            self.mode == "toggle" or self.state in LABEL)
-        self.width_s.target = float(W + TOGGLE_EXTRA if wide else W)
+            self.opacity.target = 1.0
 
     # --- frame ------------------------------------------------------------
 
+    def _settle_to_armed(self) -> None:
+        """After a terminal state, shrink back to the armed indicator rather
+        than vanishing — the user needs to know dictation is still available."""
+        self.state = "armed" if self.show_when_idle else "off"
+        self.check.target = 0.0
+        self._hold_frames = 0
+        self._retarget()
+        self.opacity.target = IDLE_OPACITY if self.show_when_idle else 0.0
+
     def _tick(self) -> None:
         dt = 1 / 60
-        for s in (self.opacity, self.scale, self.rise, self.width_s, self.check):
+        for s in (self.opacity, self.width_s, self.height_s, self.rise,
+                  self.check):
             s.step(dt)
 
         if self.state == "recording":
@@ -216,22 +263,17 @@ class Pill(QWidget):
                 self.bars.step(self.level, dt)
             else:
                 self.bars.breathe(dt)
+        elif self.state == "armed":
+            self.bars.breathe(dt)
         elif self.state in ("transcribing", "polishing"):
             self.sweep = (self.sweep + dt * 1.4) % 1.0
 
-        if self.state == "copied":
-            self._done_frames += 1
-            if self._done_frames > 210:            # ~3.5s to read and act
-                self.opacity.target = 0.0
-                self.scale.target = 0.94
-        elif self.state == "done":
-            self._done_frames += 1
-            # ~0.55s of visible confirmation once the tick has finished drawing.
-            if self.check.value > 0.92 and self._done_frames > 33:
-                self.opacity.target = 0.0
-                self.scale.target = 0.94
-        else:
-            self._done_frames = 0
+        if self.state in TERMINAL:
+            self._hold_frames += 1
+            # "copied" needs reading; the rest are just confirmation.
+            hold = 210 if self.state == "copied" else 42
+            if self._hold_frames > hold:
+                self._settle_to_armed()
 
         if self.shake > 0.0:
             self.shake = max(0.0, self.shake - dt * 5.0)
@@ -249,9 +291,10 @@ class Pill(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
         p.setOpacity(max(0.0, min(1.0, self.opacity.value)))
 
-        w = self.width_s.value * self.scale.value
-        h = H * self.scale.value
-        dx = math.sin(self.shake * 40.0) * 6.0 * self.shake
+        w = max(4.0, self.width_s.value)
+        h = max(3.0, self.height_s.value)
+        radius = h / 2.0
+        dx = math.sin(self.shake * 40.0) * 5.0 * self.shake
         rect = QRectF(
             (self.width() - w) / 2 + dx,
             (self.height() - h) / 2 + self.rise.value,
@@ -259,61 +302,75 @@ class Pill(QWidget):
         )
 
         path = QPainterPath()
-        path.addRoundedRect(rect, RADIUS, RADIUS)
+        path.addRoundedRect(rect, radius, radius)
         p.fillPath(path, BODY)
         p.setPen(QPen(HAIRLINE, 1))
         p.drawPath(path)
+        # Nothing may be drawn outside the capsule. The sweep trail used to
+        # spill past the left edge as loose dots on the desktop.
+        p.setClipPath(path)
 
         accent = ACCENT.get(self.state, ACCENT["recording"])
         label = LABEL.get(self.state) or (
             "hands-free" if self.state == "recording" and self.mode == "toggle"
             else "")
+        # Only label once the capsule has actually grown enough to hold text.
+        show_label = bool(label) and h > 18
 
-        if self.state == "recording":
-            self._draw_bars(p, rect, accent, shifted=bool(label))
+        if self.state in ("armed", "recording"):
+            self._draw_bars(p, rect, accent, shifted=show_label)
         elif self.state in ("transcribing", "polishing"):
             self._draw_sweep(p, rect, accent)
-        elif self.state == "done":
+        elif self.state in ("done", "copied"):
             self._draw_check(p, rect, accent)
 
-        if label:
+        if show_label:
             self._draw_label(p, rect, label, accent)
         p.end()
 
     def _draw_bars(self, p, rect, accent, shifted: bool) -> None:
+        """Bar geometry scales with the capsule, so the armed indicator is a
+        miniature of the same waveform rather than a different graphic."""
         heights = self.bars.heights()
-        bw, gap = 4.0, 5.0
+        scale = rect.height() / REC_SIZE[1]
+        bw = max(1.3, 2.6 * scale)
+        gap = max(1.5, 3.2 * scale)
         total = len(heights) * bw + (len(heights) - 1) * gap
-        cx = (rect.left() + 16) if shifted else (rect.center().x() - total / 2)
+        inset = max(5.0, 11.0 * scale)
+        cx = (rect.left() + inset) if shifted else (rect.center().x() - total / 2)
+
+        room = max(2.0, rect.height() - 9.0 * scale)
+        floor = max(1.4, 2.4 * scale)
         p.setPen(Qt.NoPen)
         p.setBrush(accent)
         for i, hv in enumerate(heights):
-            bh = 5.0 + hv * (rect.height() - 15.0)
+            bh = floor + hv * room
             p.drawRoundedRect(
                 QRectF(cx + i * (bw + gap), rect.center().y() - bh / 2, bw, bh),
-                2.0, 2.0)
+                bw / 2, bw / 2)
 
     def _draw_sweep(self, p, rect, accent) -> None:
         """A travelling highlight — a progress cue, not decoration. Drawn as a
         trail of fading dots rather than a gradient band."""
-        cx = rect.left() + 16 + self.sweep * 28.0
+        lead_in = 13.0 + 5 * 3.6           # room for the whole trail
+        cx = rect.left() + lead_in + self.sweep * 16.0
         p.setPen(Qt.NoPen)
         for i in range(6):
             c = QColor(accent)
             c.setAlpha(int(200 * (1.0 - i / 6.0)))
             p.setBrush(c)
-            p.drawEllipse(QPointF(cx - i * 4.5, rect.center().y()), 2.2, 2.2)
+            p.drawEllipse(QPointF(cx - i * 3.6, rect.center().y()), 1.8, 1.8)
 
     def _draw_check(self, p, rect, accent) -> None:
         """Strokes itself on: the tick is drawn to a fraction of its length."""
         t = max(0.0, min(1.0, self.check.value))
-        if t <= 0.01:
+        if t <= 0.01 or rect.height() < 12:
             return
         c = rect.center()
-        a = QPointF(c.x() - 8, c.y() + 1)
-        b = QPointF(c.x() - 2.5, c.y() + 6)
-        d = QPointF(c.x() + 8, c.y() - 6)
-        p.setPen(QPen(accent, 3.0, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        a = QPointF(c.x() - 5.5, c.y() + 0.5)
+        b = QPointF(c.x() - 1.5, c.y() + 4.0)
+        d = QPointF(c.x() + 5.5, c.y() - 4.0)
+        p.setPen(QPen(accent, 2.3, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
         if t <= 0.4:
             k = t / 0.4
             p.drawLine(a, QPointF(a.x() + (b.x() - a.x()) * k,
@@ -331,5 +388,5 @@ class Pill(QWidget):
         c = QColor(accent)
         c.setAlpha(220)
         p.setPen(c)
-        p.drawText(rect.adjusted(70, 0, -12, 0),
+        p.drawText(rect.adjusted(44, 0, -10, 0),
                    Qt.AlignVCenter | Qt.AlignLeft, text)
