@@ -1,0 +1,21 @@
+# Core
+PySide6>=6.11
+sounddevice>=0.5
+numpy>=2.0
+pyperclip>=1.11
+pywin32>=311
+comtypes>=1.4
+
+# Local speech-to-text
+faster-whisper>=1.2
+ctranslate2>=4.8
+
+# CUDA 12 runtime for CTranslate2. The pip wheel does NOT bundle these, and
+# without them murmur/stt/local.py's DLL registration is a permanent no-op:
+# CUDA can never work, and the app silently runs on CPU.
+# Remove both lines only for a deliberately CPU-only install.
+nvidia-cublas-cu12>=12.9
+nvidia-cudnn-cu12>=9.0
+
+# Test
+pytest>=8.0

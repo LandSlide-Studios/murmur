@@ -1,0 +1,11 @@
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+*.db
+models/
+dist/
+build/
+docs/shots/shots.json

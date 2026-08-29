@@ -1,0 +1,6 @@
+{
+  "stt": {
+    "device": "cuda",
+    "local_model": "large-v3-turbo"
+  }
+}
