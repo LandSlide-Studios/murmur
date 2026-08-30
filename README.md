@@ -88,6 +88,36 @@ timings. See [NOTICE.md](NOTICE.md).
 sliver off. Pausing **Listening** from the tray hides it too — the indicator is
 the honest answer to whether the hotkeys are live.
 
+### Sounds
+
+A whole cinematic, adapted from [Sotto](https://github.com/kingbootoshi/sotto)
+(MIT) — see [NOTICE.md](NOTICE.md):
+
+| When | Sound |
+|---|---|
+| You start talking | A wood-bar acknowledgement on F |
+| While it transcribes | A sub swell, rising 46 to 88 Hz |
+| As the comet leaves | Noise sweeping downward |
+| As it lands | A splash and a sub drop |
+| If you cancel | A falling minor third |
+
+**Six packs**, switchable from the tray under **Sounds**, all ported from Sotto:
+*Sotto* (wood, felt and a swell), *Velvet Thud* (sub pulses you feel), *Warm
+Glass* (muted mallet tones), *Wood Bar* (round marimba notes), *Breath* (pure
+air, almost silent) and *Heartbeat* (lub-dub pulses). Picking one plays it
+straight away, so you choose by ear.
+
+Their principle is **felt, not heard**: every voice passes its own low-pass and
+then a master 2 kHz ceiling, so the energy sits at 40–600 Hz and nothing
+pierces. Cues anchor to F and C, so hearing them a hundred times a day never
+sounds out of tune with itself. Measured on the shipped files, the tonal cues
+put 97–99% of their energy below 600 Hz.
+
+The packs are deliberately *not* normalised to a common loudness — that would
+make "almost silent" as loud as "pulses you feel". They are synthesized by
+`scripts/make_sounds.py` rather than shipped as opaque assets, so the recipe is
+readable. Turn them off with `sound.enabled`, or **Sounds → Mute** in the tray.
+
 ---
 
 ## Install
