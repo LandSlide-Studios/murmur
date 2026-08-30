@@ -43,11 +43,12 @@ def shot(name, bg="#1B1D22", zoom=2):
 # 0.012, a normal speaking voice sits near 0.03 and loud talking near 0.075.
 # These used to be 0.30 and 0.50 — ten times a real voice — so every shot was
 # saturated and showed a meter nobody would ever see.
-# Solved back from the 42.4s dictation that fell under the old guard while he
-# talked through it: his speaking voice on the eMeet C96 reads about 0.008, not
-# the 0.03 a close mic would give. Rendering at 0.03 was still three times his
-# real voice, which is how the meter kept passing review and failing in his hand.
-QUIET, NORMAL, LOUD = 0.004, 0.008, 0.020
+# MEASURED from his own dictations, not assumed. Level logging reports the
+# loudest 400ms window of a real one at 0.0195-0.0268, and blocks during ordinary
+# speech around 0.014. Two earlier versions of this line used 0.30 and then 0.03
+# — both far above his voice — which is why the meter kept passing review here
+# and failing in his hand.
+QUIET, NORMAL, LOUD = 0.004, 0.014, 0.027
 
 print("rendering states:")
 pill.set_state("armed")

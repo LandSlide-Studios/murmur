@@ -15,10 +15,14 @@ _BREATHE_HZ = 0.4
 # The level a dictating voice peaks at ON HIS MICROPHONE. This was 0.06, chosen
 # for a close mic, and it is the third constant in this app to have been set
 # above his actual speaking voice — the other two being
-# `audio.speech_rms_threshold` and `_PEAK_MIN` below. His eMeet C96 at arm's
-# length reads about 0.008, solved back from the 42.4s dictation that fell under
-# the old silence guard while he talked through it. At 0.06 the meter reached
+# `audio.speech_rms_threshold` and `_PEAK_MIN` below. At 0.06 the meter reached
 # 35% for him no matter what else was tuned.
+#
+# Measured from his own dictations once level logging was added: the loudest
+# 400ms window of a real one is 0.0195-0.0268. (An earlier figure of 0.008 was
+# derived rather than measured, and was the average across a whole clip — the
+# meter sees per-block peaks two to three times that. Corrected here so nobody
+# recalibrates against the wrong number.)
 #
 # Not pushed all the way down to his 0.008 either: that put his normal voice at
 # 94% and left the meter with nothing to say about loudness, since everything

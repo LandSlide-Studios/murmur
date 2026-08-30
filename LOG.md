@@ -664,3 +664,37 @@ Confirmed failing on the old guard and passing on the new.
 - A full-scale bar was capped at 83% of the capsule by the side margin; now 95%.
 
 342 tests, 17/17 checks.
+
+### Same day — the calibration, finally measured instead of derived
+
+Level logging went in with the silence-guard fix, so his next dictations reported
+their own loudness:
+
+```
+16:33:17  level: loudest 400ms window 0.0268 over 31.0s
+16:34:36  level: loudest 400ms window 0.0195 over 10.5s
+```
+
+**This corrects the 0.008 figure recorded above.** That number was *derived* from
+the 42.4s failure and was the average across a whole clip; the meter is fed
+per-block levels, whose peaks run two to three times higher. The derivation was
+sound for what it measured and wrong for what it was then used to calibrate.
+
+Checked against the real numbers, `_REFERENCE = 0.020` lands well:
+
+| his block level | meter reads |
+|---|---|
+| 0.004 (threshold) | 36% |
+| 0.008 (quiet) | 50% |
+| 0.014 (typical) | 67% |
+| 0.027 (his peak) | 83% |
+
+Real dynamics across the range he actually speaks in, and the silence guard now
+sits **10x** below his quietest measured recording — the 42-second loss cannot
+recur at anything like his normal volume.
+
+`probe_pill.py` corrected a third time: 0.30 → 0.03 → 0.014. The first two were
+guesses; this one is his own microphone.
+
+Also: the resting pill draws nothing inside itself. Armed means Murmur is loaded,
+not that it is listening, and bars in it said otherwise.
