@@ -29,6 +29,11 @@ log = logging.getLogger(__name__)
 
 DEFAULT_PREROLL_MS = 400
 
+# Windows measured per chunk. 64 windows is ~25s of audio, so the transient
+# stays a couple of MB whatever the recording length, while still amortising
+# the Python loop over thousands of samples per iteration.
+_SCAN_WINDOWS = 64
+
 
 def rms(block: np.ndarray) -> float:
     if block.size == 0:
@@ -56,11 +61,26 @@ def peak_rms(pcm: np.ndarray, sample_rate: int = 16000,
     if pcm.size <= win:
         return rms(pcm)
     n = pcm.size // win
-    blocks = pcm[:n * win].reshape(n, win).astype(np.float64)
-    # nanmax, not max: a single NaN sample from a device fault propagates
-    # through max() and returns NaN, which compares False against every
-    # threshold — so a clip of full-scale speech would be discarded as silent.
-    best = float(np.nanmax(np.sqrt(np.nanmean(np.square(blocks), axis=1))))
+    # Chunked, accumulating in float64 WITHOUT materialising a float64 copy of
+    # the audio. This used to promote the whole clip and then square it — two
+    # full-size temporaries at double width, 166MB transient for a 26MB clip,
+    # immediately after read_all had done the same thing on the same path.
+    #
+    # nan_to_num rather than nanmax: a single NaN sample from a device fault
+    # propagates and returns NaN, which compares False against every threshold,
+    # so a clip of full-scale speech would be discarded as silent.
+    best = 0.0
+    for i in range(0, n, _SCAN_WINDOWS):
+        block = pcm[i * win:min(i + _SCAN_WINDOWS, n) * win].reshape(-1, win)
+        # Only pay for the cleaning copy when there is something to clean.
+        # Non-finite samples come from a device fault and are vanishingly rare;
+        # copying every chunk to guard against them made the common path cost
+        # what the rare one does.
+        if not np.isfinite(block).all():
+            block = np.nan_to_num(block, nan=0.0, posinf=0.0, neginf=0.0)
+        mean_square = np.einsum("ij,ij->i", block, block, dtype=np.float64) / win
+        if mean_square.size:
+            best = max(best, float(np.sqrt(mean_square.max())))
     tail = pcm[n * win:]
     if tail.size:
         # Measure the tail at full window width by zero-padding rather than
@@ -105,11 +125,28 @@ class RingBuffer:
             self._len = min(self._cap, self._len + block.size)
 
     def read_all(self) -> np.ndarray:
+        """Samples in write order, as a single copy.
+
+        This used to build an int64 index for every sample -- an arange, an add
+        and a modulo, each twice the width of the audio itself -- then fancy
+        index with it and call .copy() on an array fancy indexing had already
+        copied. Measured on the shipped 30-minute ceiling: 235ms and 461MB
+        transient for a 115MB recording, on the chord-release path, on a machine
+        already holding a speech model and a 7B cleanup model on an 8GB card.
+
+        The buffer is at most two contiguous runs. Copying them is the whole job.
+        """
         with self._lock:
             if self._len == 0:
                 return np.zeros(0, dtype=np.float32)
-            idx = (self._start + np.arange(self._len)) % self._cap
-            return self._buf[idx].copy()
+            end = self._start + self._len
+            if end <= self._cap:
+                return self._buf[self._start:end].copy()
+            first = self._cap - self._start
+            out = np.empty(self._len, dtype=np.float32)
+            out[:first] = self._buf[self._start:]
+            out[first:] = self._buf[:self._len - first]
+            return out
 
     def reset(self) -> None:
         with self._lock:

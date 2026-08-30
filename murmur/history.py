@@ -100,6 +100,11 @@ class History:
                 "SELECT * FROM sessions WHERE id=?", (row_id,)).fetchone()
         return dict(row) if row else None
 
+    def count(self) -> int:
+        with self._lock:
+            return int(self._conn.execute(
+                "SELECT COUNT(*) FROM sessions").fetchone()[0])
+
     def purge(self, keep: int) -> None:
         """Trim to the newest `keep` rows. Retention is unlimited by default."""
         if keep <= 0:

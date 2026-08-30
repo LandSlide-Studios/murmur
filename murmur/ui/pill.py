@@ -351,6 +351,19 @@ class Pill(QWidget):
         self._retarget()
         self.opacity.target = IDLE_OPACITY if self.show_when_idle else 0.0
 
+    def _at_rest(self) -> bool:
+        """Armed, settled, and drawing nothing that moves.
+
+        Armed draws only the capsule -- no bars, no rim, no orb -- but the timer
+        kept running, stepping fifteen springs and issuing a full repaint of a
+        translucent always-on-top window sixty times a second, indefinitely. The
+        paint path changed when the resting pill was emptied; the timer was not
+        updated to match.
+        """
+        return (self.state == "armed"
+                and self.opacity.at_rest and self.width_s.at_rest
+                and self.height_s.at_rest and self.slide.at_rest)
+
     def _tick(self) -> None:
         dt = 1 / 60
         for s in (self.opacity, self.width_s, self.height_s, self.slide,
@@ -388,6 +401,13 @@ class Pill(QWidget):
         if self.opacity.target == 0.0 and self.opacity.value < 0.01:
             self._timer.stop()
             self.hide()
+        elif self._at_rest():
+            # Nothing left to animate. The armed pill draws only its capsule —
+            # no bars, no rim, no orb — but the timer kept stepping fifteen
+            # springs and repainting a translucent always-on-top window sixty
+            # times a second, indefinitely. One last paint above, then stop;
+            # set_state starts it again.
+            self._timer.stop()
 
     # --- painting ---------------------------------------------------------
 

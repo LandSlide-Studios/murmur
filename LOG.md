@@ -951,3 +951,40 @@ and corrected; anything held only in `polished_text` was invisible to the only
 search API the panel has.
 
 470 tests, 17/17 checks.
+
+## 2026-08-30 — remediation tier 5: the cost of a long dictation is proportional
+
+**20 + 21 were one change.** `read_all` built an int64 index for every sample —
+an arange, an add and a modulo, each twice the width of the audio itself — then
+fancy-indexed with it and copied an array fancy indexing had already copied. The
+buffer is at most two contiguous runs; copying them is the whole job.
+
+| | before | after |
+|---|---|---|
+| `read_all`, 30-min buffer | 235 ms | **20 ms** |
+| `read_all` transient | 461 MB | **115 MB** (one copy) |
+| `peak_rms` transient | 166 MB | **0.4 MB** |
+
+`peak_rms` promoted the whole clip to float64 and squared it — two full-size
+temporaries at double width, immediately after `read_all` had done the same on
+the same path. Now scans in 64-window chunks accumulating through `einsum` at
+float64 without materialising a copy, and only pays for the NaN-cleaning copy
+when a chunk actually contains something non-finite. The transient is now flat
+at 0.4 MB whatever the recording length.
+
+Guarded by a differential check against a reference deque across seven
+capacity/write patterns, plus a burst placed exactly on a chunk boundary — a
+faster read that returns the wrong samples is far worse than a slow one.
+
+**22. The resting pill stopped repainting.** Armed draws only its capsule, but
+the timer kept stepping fifteen springs and repainting a translucent
+always-on-top window sixty times a second, indefinitely. The paint path changed
+when the resting pill was emptied; the timer was never updated to match.
+
+**23. History retention exists now, and is off.** `purge()` was there and nothing
+called it. Added `history.keep_rows`, defaulting to **unlimited** — deleting
+someone's dictation history is not a default to choose on their behalf — plus the
+row count logged at startup, so growth is visible rather than merely
+undocumented. *The number, if he wants one, is his to pick.*
+
+491 tests, 17/17 checks.

@@ -58,6 +58,14 @@ DEFAULTS = {
     },
     "sound": {"enabled": True, "pack": "sotto"},
     "clipboard": {"restore_previous": False},
+    "history": {
+        # Newest rows to keep, or 0 for unlimited. Defaults to unlimited
+        # because deleting someone's dictation history is not a default any
+        # tool gets to choose on their behalf -- but the mechanism now exists
+        # and the size is logged at startup, so unbounded growth is visible
+        # rather than merely undocumented.
+        "keep_rows": 0,
+    },
     "learning": {"enabled": True, "promote_after_hits": 2, "uia_readback": True},
     "ui": {"pill_position": "right-center", "pill_offset_px": 12,
            "idle_indicator": True,
@@ -84,6 +92,7 @@ _RANGES = {
     "polish.timeout_s": (0.1, 600.0),
     "polish.max_growth_ratio": (1.0, 100.0),
     "polish.min_shrink_ratio": (0.0, 1.0),
+    "history.keep_rows": (0, 10_000_000),
     "learning.promote_after_hits": (1, 1000),
     "ui.pill_offset_px": (0, 10_000),
 }
@@ -99,6 +108,7 @@ _TYPES = {
     "polish.min_shrink_ratio": (int, float),
     "clipboard.restore_previous": (bool,),
     "learning.enabled": (bool,),
+    "history.keep_rows": (int,),
     "learning.promote_after_hits": (int,),
     "learning.uia_readback": (bool,),
     "ui.pill_offset_px": (int,),

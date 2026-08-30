@@ -136,6 +136,7 @@ class MurmurApp:
             Act.DISCARD: self._discard,
             Act.CANCEL: self._cancel_session,
         }
+        self._apply_retention()
         self._worker: threading.Thread | None = None
         # How long quitting waits for a dictation already in flight. Long enough
         # for a transcription plus a cleanup pass; short enough that a wedged
@@ -359,6 +360,24 @@ class MurmurApp:
             return
         self._cue("cancel")
         self.on_state("cancelled")
+
+    def _apply_retention(self) -> None:
+        """Trim the history if the user asked for a cap, and log its size.
+
+        `purge()` existed and nothing called it, so history grew without limit
+        and a single transcript can exceed a megabyte. The default is still
+        unlimited -- deleting someone's dictations is not a default to choose
+        for them -- but the count is now in the log, so growth is visible.
+        """
+        try:
+            keep = int(self.cfg.get("history.keep_rows", 0) or 0)
+            if keep > 0:
+                self.history.purge(keep)
+            log.info("history holds %d dictations (retention: %s)",
+                     self.history.count(),
+                     f"newest {keep}" if keep > 0 else "unlimited")
+        except Exception:
+            log.debug("could not apply history retention", exc_info=True)
 
     def _unpend(self, session: "Session") -> None:
         """Drop a session from the cancellable set. Safe to call twice."""
