@@ -59,8 +59,30 @@ class ChordFSM:
     def should_suppress(self, kind: str, key: str) -> bool:
         """Swallow Space, both down and up, only while Ctrl+Win are held — so
         Win+Space never reaches the input-language switcher, and the target app
-        never sees a dangling keyup. Esc and everything else always pass through."""
-        return key == "space" and self._chord_down()
+        never sees a dangling keyup. Esc and everything else always pass through.
+
+        The keyup is decided by whether we swallowed its keydown, NOT by whether
+        the chord is still held. Reading the live chord state meant releasing
+        Ctrl before Space sent the target app a Space release with no press.
+        """
+        if key != "space":
+            return False
+        if kind == "down":
+            self._space_swallowed = self._chord_down()
+            return self._space_swallowed
+        if self._space_swallowed:
+            self._space_swallowed = False
+            return True
+        return False
+
+    def wants_other_keys(self) -> bool:
+        """Whether a key outside the chord is worth delivering.
+
+        Only a push-to-talk hold cares: a key joining it means the user reached
+        for a Windows shortcut. The hook consults this so it does not pay for an
+        FSM step on every keystroke the user ever types.
+        """
+        return self.state is St.REC_HOLD
 
     def adopt_toggle_session(self) -> None:
         """Mark a session started outside the chords as live.
@@ -89,6 +111,13 @@ class ChordFSM:
 
         if not self._chord_down():
             self._blocked_until_release = False
+            # An arm belongs to the chord press that created it. It used to
+            # outlive the release, so pressing Ctrl+Win during a hands-free
+            # session — reaching for Ctrl+Win+arrow, say — left the session
+            # armed, and the next Space he typed ended it and pasted the
+            # transcript into whatever had focus. Hands-free exists for talking
+            # WHILE typing; Space is the most-typed key there is.
+            self.armed_for_stop = False
 
         # Esc cancels from any active state and is never suppressed.
         if ev.kind == "down" and ev.key == "esc":
@@ -119,6 +148,12 @@ class ChordFSM:
             if ev.kind == "down" and ev.key == "space":
                 self.state = St.REC_TOGGLE
                 self.armed_for_stop = False
+                # The chord is still physically down at the moment of promotion,
+                # and Windows keeps sending auto-repeat keydowns for held keys.
+                # Without this, a repeat could arm and a second Space stop the
+                # session it had just started. IDLE guards the same hazard the
+                # same way.
+                self._blocked_until_release = True
                 return [Act.PROMOTE_TOGGLE]
             if ev.kind == "up" and ev.key in MODIFIERS:
                 elapsed = ev.t_ms - self.started_at
@@ -129,9 +164,13 @@ class ChordFSM:
 
         if self.state is St.REC_TOGGLE:
             # Hands are off the keyboard: modifier releases mean nothing.
-            if ev.kind == "down" and ev.key in MODIFIERS and self._chord_down():
+            if (ev.kind == "down" and ev.key in MODIFIERS
+                    and self._chord_down() and not self._blocked_until_release):
                 self.armed_for_stop = True
-            elif ev.kind == "down" and ev.key == "space" and self.armed_for_stop:
+            elif (ev.kind == "down" and ev.key == "space"
+                    and self.armed_for_stop and self._chord_down()):
+                # _chord_down() as well as the arm: the stop gesture is a chord
+                # being HELD as Space lands, not an arm left over from earlier.
                 return self._end(Act.STOP_AND_TRANSCRIBE)
             return []
 

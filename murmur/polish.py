@@ -10,6 +10,7 @@ is returned unchanged. An unpolished dictation beats a lost one.
 
 import json
 import logging
+import re
 import urllib.error
 import urllib.request
 
@@ -56,6 +57,44 @@ _GROWTH_SLACK = 20
 # summary, not a cleanup, and the raw transcript is used instead.
 _MIN_SHRINK_RATIO = 0.6
 _SHRINK_SLACK = 20
+
+# Words a cleanup is SUPPOSED to remove, so losing them must not count as
+# losing content. Everything else the user said should still be there.
+_FILLERS = frozenset("""
+um uh erm ah eh hmm mm like so basically actually really just yeah yep okay ok
+right well kinda sorta gonna wanna i mean you know a an the and or of to that
+it is was in on at for with as be been am are s t re ve ll d
+""".split())
+
+# Below this fraction of the user's content words surviving, the model did not
+# clean the transcript — it summarised, refused, answered, or translated it.
+_MIN_WORD_RETENTION = 0.7
+
+# Enough content words for the ratio to mean anything. Under this a legitimate
+# cleanup of a heavily-fillered fragment ("um so like yeah" -> "Yeah.") would
+# trip it.
+_MIN_WORDS_TO_JUDGE = 3
+
+_WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
+
+# C0 controls other than tab and newline. A NUL is the dangerous one: the Win32
+# clipboard sizes its buffer with wcslen, so everything after a NUL is silently
+# dropped — content loss presented as success.
+_CONTROLS = re.compile("[%s]" % "".join(
+    chr(c) for c in [*range(0, 9), 11, 12, *range(14, 32), 127]))
+
+_FENCE = re.compile(
+    r"^\s*```[a-zA-Z0-9_-]*\s*\n(.*?)\n?\s*```\s*$", re.S)
+
+# The model talking ABOUT the task instead of doing it.
+# A newline after the colon is required, and the lead-in must be short. Without
+# both, this ate real speech: "Okay, the deploy window is nine to five:
+# tomorrow." was stripped down to "tomorrow." A model announcing itself always
+# puts the transcript on its own line; a person dictating a colon does not.
+_PREAMBLE = re.compile(
+    r"^\s*(?:here(?:'s| is)|sure|certainly|of course|okay|ok)\b"
+    r"[^\n:]{0,40}:[ \t]*\n+",
+    re.I)
 
 # Generation cap. Must comfortably exceed the longest plausible dictation:
 # auto-stop is silence-based with no wall-clock limit, so multi-minute sessions
@@ -200,6 +239,35 @@ class Polisher:
             return out[1:-1].strip()
         return out
 
+    @staticmethod
+    def _content_words(text: str) -> list[str]:
+        return [w for w in (m.group().lower() for m in _WORD_RE.finditer(text))
+                if w not in _FILLERS]
+
+    @classmethod
+    def _kept_enough(cls, raw: str, out: str) -> float | None:
+        """Fraction of the user's content words still present, or None if the
+        transcript is too short to judge."""
+        src = cls._content_words(raw)
+        if len(src) < _MIN_WORDS_TO_JUDGE:
+            return None
+        kept = set(cls._content_words(out))
+        return sum(1 for w in src if w in kept) / len(src)
+
+    @classmethod
+    def _strip_wrappers(cls, out: str) -> str:
+        """Remove a markdown fence or a "Here is the cleaned transcript:" lead-in.
+
+        `_unwrap_quotes` already establishes that model-added wrappers must not
+        reach the cursor. Fences and preambles are the same thing, and the growth
+        guard is far too loose to stop them — at 1.4x + 20 a 65-character
+        dictation may grow by 111, so a 30-character preamble sails through.
+        """
+        m = _FENCE.match(out)
+        if m:
+            out = m.group(1).strip()
+        return _PREAMBLE.sub("", out).strip()
+
     def polish(self, raw: str, glossary: list[str] | None = None) -> str:
         if not self.enabled or not raw.strip():
             return raw
@@ -216,7 +284,13 @@ class Polisher:
             log.warning("polish returned empty, using raw transcript")
             return raw
 
-        out = self._unwrap_quotes(out.strip(), raw)
+        # Order matters: unfence and de-preamble first, so the guards below
+        # judge the text that would actually be typed, not its packaging.
+        out = _CONTROLS.sub("", out)
+        out = self._unwrap_quotes(self._strip_wrappers(out.strip()), raw)
+        if not out:
+            log.warning("polish returned only wrappers, using raw transcript")
+            return raw
 
         if len(out) > len(raw) * self.max_growth_ratio + _GROWTH_SLACK:
             log.warning(
@@ -234,5 +308,21 @@ class Polisher:
                 "using raw transcript",
                 len(raw), len(out), 100.0 * len(out) / max(len(raw), 1),
             )
+            return raw
+
+        # The character guards above cannot see a substitution. A refusal, a
+        # translation, or an answer to the question the user dictated all come
+        # back at roughly the input's length and sail through — and that looks
+        # like success, which makes it the worst failure of the three.
+        #
+        # They are also unreachable on short input: the slack is absolute, so
+        # for anything under 34 characters no non-empty output could ever trip
+        # the shrink guard. "remind me to email the landlord" was replaced by
+        # "." and typed at the cursor.
+        kept = self._kept_enough(raw, out)
+        if kept is not None and kept < _MIN_WORD_RETENTION:
+            log.warning(
+                "polish kept only %.0f%% of the words spoken, using raw "
+                "transcript", 100.0 * kept)
             return raw
         return out

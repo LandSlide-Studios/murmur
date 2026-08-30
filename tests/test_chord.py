@@ -133,7 +133,59 @@ def test_suppression_covers_the_space_keyup_too():
     fsm = ChordFSM()
     fsm.feed(Ev("down", CTRL, 0))
     fsm.feed(Ev("down", WIN, 10))
+    assert fsm.should_suppress("down", SPACE) is True
     assert fsm.should_suppress("up", SPACE) is True
+
+
+def test_the_space_keyup_is_swallowed_even_if_ctrl_was_released_first():
+    """The keyup used to be decided by the live chord state, so letting go of
+    Ctrl before Space sent the target app a Space release with no press."""
+    fsm = ChordFSM()
+    fsm.feed(Ev("down", CTRL, 0))
+    fsm.feed(Ev("down", WIN, 10))
+    assert fsm.should_suppress("down", SPACE) is True
+    fsm.feed(Ev("up", CTRL, 20))                  # chord broken first
+    assert fsm.should_suppress("up", SPACE) is True
+
+
+def test_a_space_we_did_not_swallow_passes_its_keyup_through():
+    fsm = ChordFSM()
+    assert fsm.should_suppress("down", SPACE) is False
+    assert fsm.should_suppress("up", SPACE) is False
+
+
+def test_an_arm_does_not_survive_letting_go_of_the_chord():
+    """Pressing Ctrl+Win during a hands-free session — reaching for
+    Ctrl+Win+arrow — used to leave it armed, so the next Space he typed ended
+    the session and pasted into whatever had focus. Hands-free is for talking
+    WHILE typing."""
+    acts = drive(HOLD_DOWN + [
+        ("down", SPACE, 50), ("up", SPACE, 60), ("up", WIN, 70), ("up", CTRL, 80),
+        ("down", CTRL, 5000), ("down", WIN, 5005),
+        ("up", CTRL, 5010), ("up", WIN, 5015),
+        ("down", SPACE, 99999),
+    ])
+    assert Act.STOP_AND_TRANSCRIBE not in acts
+    assert acts == [Act.START_HOLD, Act.PROMOTE_TOGGLE]
+
+
+def test_autorepeat_of_the_held_chord_cannot_stop_a_just_promoted_session():
+    """The chord is still down at the moment of promotion and Windows repeats
+    held keys, so a repeat could arm and a second Space stop the session it had
+    only just started."""
+    acts = drive(HOLD_DOWN + [
+        ("down", SPACE, 50),
+        ("down", CTRL, 600), ("down", SPACE, 630),
+    ])
+    assert acts == [Act.START_HOLD, Act.PROMOTE_TOGGLE]
+
+
+def test_the_real_stop_chord_still_works_after_a_full_release():
+    acts = drive(HOLD_DOWN + [
+        ("down", SPACE, 50), ("up", SPACE, 60), ("up", WIN, 70), ("up", CTRL, 80),
+        ("down", CTRL, 5000), ("down", WIN, 5005), ("down", SPACE, 5020),
+    ])
+    assert acts == [Act.START_HOLD, Act.PROMOTE_TOGGLE, Act.STOP_AND_TRANSCRIBE]
 
 
 def test_repeated_keydown_from_auto_repeat_does_not_restart():

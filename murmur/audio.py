@@ -57,9 +57,22 @@ def peak_rms(pcm: np.ndarray, sample_rate: int = 16000,
         return rms(pcm)
     n = pcm.size // win
     blocks = pcm[:n * win].reshape(n, win).astype(np.float64)
-    best = float(np.sqrt(np.square(blocks).mean(axis=1)).max())
+    # nanmax, not max: a single NaN sample from a device fault propagates
+    # through max() and returns NaN, which compares False against every
+    # threshold — so a clip of full-scale speech would be discarded as silent.
+    best = float(np.nanmax(np.sqrt(np.nanmean(np.square(blocks), axis=1))))
     tail = pcm[n * win:]
-    return max(best, rms(tail)) if tail.size >= win // 2 else best
+    if tail.size:
+        # Measure the tail at full window width by zero-padding rather than
+        # dropping it. It used to be discarded whenever it was shorter than half
+        # a window, which silently threw away up to 199.9ms — and the tail is
+        # the END of the recording, where the last word is. A short reply that
+        # fit entirely inside it read as silence, and one extra sample flipped
+        # the verdict.
+        padded = np.zeros(win, dtype=np.float64)
+        padded[:tail.size] = np.nan_to_num(tail.astype(np.float64))
+        best = max(best, float(np.sqrt(np.square(padded).mean())))
+    return 0.0 if np.isnan(best) else best
 
 
 class RingBuffer:
@@ -161,6 +174,12 @@ class Recorder:
         self.open()
         self.buffer.reset()
         pre = self.preroll.read_all()
+        # Drain it. The pre-roll stops being fed for as long as a session is
+        # capturing, so without this the SAME 400ms is prepended to the next
+        # session too — and it can be arbitrarily old, since the end-of-session
+        # cue mutes the pre-roll straight after. The opening words of one
+        # dictation reappeared at the head of the next.
+        self.preroll.reset()
         if pre.size:
             self.buffer.write(pre)
         self._capturing = True

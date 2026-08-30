@@ -698,3 +698,62 @@ guesses; this one is his own microphone.
 
 Also: the resting pill draws nothing inside itself. Armed means Murmur is loaded,
 not that it is listening, and bars in it said otherwise.
+
+## 2026-08-30 — air-gapped adversarial audit, ~300 scenarios
+
+Seven independent authors, each given one subsystem's contract and nothing else:
+no engineering log, no locked-decision list, no existing tests. They wrote and ran
+scenarios and reported failures with reproductions. Six of seven have reported.
+
+Every claim below was re-verified here before anything changed. Fixed this pass:
+
+**The Ctrl+Win shortcut guard never ran in production.** `chord.py` discards a
+HOLD when a foreign key joins it, and `tests/test_chord.py` proved that branch
+works — by feeding the FSM directly. `hotkey.py` filters every vkCode through
+`VK_MAP`, which contains only ctrl/win/space/esc, so no foreign key was ever
+delivered and the branch was unreachable. A guard shipped, tested, and written
+into CLAUDE.md as a guarantee, that never executed once. The test was at the
+wrong layer.
+
+**A stale arm ended hands-free sessions.** `armed_for_stop` was set by any
+modifier keydown during a hands-free session and cleared only when the session
+ended. Pressing Ctrl+Win — reaching for Ctrl+Win+arrow — left it armed after
+release, and the next Space typed ended the dictation and pasted it into whatever
+had focus. Traced end to end. Hands-free exists for talking WHILE typing, and
+Space is the most-typed key there is. Now cleared on release, and the stop
+requires the chord to be held as Space lands.
+
+**Auto-repeat could stop a session it had just started.** The chord is still down
+at the moment of promotion; a repeat could arm and a second Space stop it ~600ms
+in. `IDLE` already guarded this with `_blocked_until_release`; `REC_TOGGLE` now
+does too.
+
+**The pre-roll was replayed into the next session.** `begin()` consumed it but
+never drained it, and it stops being fed while capturing — so the same 400ms was
+prepended again, arbitrarily old, since the end-of-session cue mutes it straight
+after. The opening words of one dictation reappeared at the head of another.
+
+**`peak_rms` threw away up to 199.9ms of every clip** — a hole in the silence fix
+made hours earlier. The tail was discarded whenever it was under half a window,
+and the tail is the END of the recording, where the last word is. A short reply
+that fit inside it read as silence, and one extra sample flipped the verdict.
+Now zero-padded and measured. A single NaN sample also sank a whole clip:
+`max()` propagates it and NaN compares False against every threshold.
+
+**The cleanup could type things that were not what he said.** The character
+guards only catch length-shaped failures. A refusal, a translation, or an answer
+to the dictated question all return at roughly the input's length and passed —
+and that looks like success. The guards were also unreachable below 34
+characters, because the shrink slack is absolute: "remind me to email the
+landlord" came back as "." and was typed. Added a content-word retention check
+(fillers excluded, so a real cleanup still passes), plus stripping of markdown
+fences, model preambles, and control characters — a NUL silently truncates the
+Win32 clipboard, which is content loss presented as success.
+
+My first preamble pattern ate real speech ("Okay, the deploy window is nine to
+five: tomorrow." → "tomorrow."). The retention guard caught it and fell back to
+raw, which is the layering working, but the pattern now requires a newline after
+the colon.
+
+375 tests, 17/17 checks. Remaining findings are triaged in the reply to Tommy —
+several need a product decision rather than a fix.

@@ -134,3 +134,84 @@ def test_peak_rms_handles_clips_shorter_than_one_window():
     assert peak_rms(np.zeros(0, dtype=np.float32), 16000) == 0.0
     loud = np.full(800, 0.3, dtype=np.float32)
     assert peak_rms(loud, 16000) > 0.2
+
+
+def test_the_preroll_is_not_replayed_into_the_next_session():
+    """It was read but never drained, and it stops being fed while a session is
+    capturing — so the same 400ms was prepended to the NEXT session too, and it
+    could be arbitrarily old since the end-of-session cue mutes it straight
+    after. The opening words of one dictation reappeared at the head of another.
+    """
+    from murmur.audio import Recorder
+
+    r = Recorder(sample_rate=1000, max_seconds=10, preroll_ms=400)
+    r._callback(np.full(400, 0.11, np.float32).reshape(-1, 1), 400, None, None)
+
+    def session(value):
+        r.buffer.reset()
+        pre = r.preroll.read_all()
+        r.preroll.reset()
+        if pre.size:
+            r.buffer.write(pre)
+        r._capturing = True
+        r._callback(np.full(1000, value, np.float32).reshape(-1, 1), 1000, None, None)
+        out = r.buffer.read_all()
+        r._capturing = False
+        return out
+
+    session(0.22)
+    second = session(0.33)
+    assert int(np.sum(second == np.float32(0.11))) == 0, "stale pre-roll replayed"
+
+
+def test_begin_drains_the_preroll_it_consumed():
+    from murmur.audio import Recorder
+
+    r = Recorder(sample_rate=1000, max_seconds=10, preroll_ms=400)
+    r._callback(np.full(400, 0.5, np.float32).reshape(-1, 1), 400, None, None)
+    assert r.preroll.read_all().size == 400
+    r.open = lambda: None
+    r.begin()
+    r._capturing = False
+    assert r.preroll.read_all().size == 0
+
+
+def test_speech_only_in_a_short_tail_is_not_read_as_silence():
+    """The tail was discarded whenever it was under half a window — up to
+    199.9ms thrown away. The tail is the END of the recording, where the last
+    word lives, so a short reply that fit inside it read as silence."""
+    from murmur.audio import peak_rms
+
+    # Zero-padding scales the reading by how much of the window is real audio,
+    # so a tail long enough to hold a word registers and a stray sample does
+    # not. 800 samples is 50ms — shorter than any spoken word.
+    win = 6400                                     # 400ms at 16kHz
+    for extra in (800, 1600, 3199, 3200):
+        pcm = np.zeros(win + extra, dtype=np.float32)
+        pcm[win:] = 0.5
+        assert peak_rms(pcm, 16000) > 0.05, f"{extra / 16:.0f}ms tail read as silent"
+
+
+def test_one_extra_sample_does_not_flip_the_verdict():
+    from murmur.audio import peak_rms
+
+    win = 6400
+    a = np.zeros(win + 3199, dtype=np.float32); a[win:] = 0.5
+    b = np.zeros(win + 3200, dtype=np.float32); b[win:] = 0.5
+    assert abs(peak_rms(a, 16000) - peak_rms(b, 16000)) < 0.05
+
+
+def test_a_single_nan_does_not_sink_a_loud_recording():
+    """max() propagates NaN, and NaN compares False against every threshold, so
+    one bad sample from a device fault discarded a clip of full-scale speech."""
+    from murmur.audio import peak_rms
+
+    pcm = np.full(32000, 0.4, np.float32)
+    pcm[123] = np.nan
+    assert peak_rms(pcm, 16000) > 0.3
+
+
+def test_an_all_nan_recording_is_treated_as_silence_not_as_speech():
+    from murmur.audio import peak_rms
+
+    assert peak_rms(np.full(32000, np.nan, np.float32), 16000) == 0.0
