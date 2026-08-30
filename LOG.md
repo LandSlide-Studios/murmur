@@ -495,3 +495,29 @@ instead. Recorded here so the next session does not re-run that query expecting
 something else.
 
 313 tests, 17/17 checks.
+
+### Follow-up the same day — the meter was a barcode, and it was measurable
+
+Packing the bars closer exposed a problem that wide spacing had hidden. Each bar
+ran on its own non-harmonic oscillator, which is what made nine well-spaced bars
+look alive. At fifteen bars on a 1.4px gap the row is visually continuous, and
+independence stops reading as liveliness and starts reading as noise.
+
+Quantified rather than eyeballed: count sign changes in the row's first
+difference, i.e. how many crests it has. A waveform has a few; a barcode
+approaches n-2. It measured **12 of a possible 12** — every neighbouring pair
+disagreed in direction, every frame.
+
+The wrong fix is a shallower swing; the old comment in `waveform.py` was right
+that this gives a shimmer. The right one is correlating the neighbours, because
+that is what a waveform is. Replaced the per-bar oscillators with two waves
+travelling *along* the row, spatial periods that don't divide evenly so the
+crests drift in and out of alignment and the shape never repeats. Spring stagger
+cut from `i*26` to `i*8` — the waves carry the liveliness now, and a wide stagger
+would decorrelate exactly what the waves exist to correlate.
+
+**3 crests, down from 12.** Pinned by three tests: crest count, neighbour-vs-
+distant spread, and a check that the row still changes shape rather than settling
+into a static arch.
+
+316 tests.
