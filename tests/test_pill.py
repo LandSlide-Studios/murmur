@@ -355,3 +355,50 @@ def test_a_silent_bar_is_about_half_a_speaking_one(qapp):
     silent = Pill.bar_length(FLAT, w, 1.0)
     speaking = Pill.bar_length(0.66, w, 1.0)     # a typical bar at his voice
     assert 0.35 < silent / speaking < 0.62
+
+
+def test_the_resting_pill_is_empty(pill):
+    """Armed is the resting indicator: Murmur is loaded, not listening. Bars in
+    it read as listening."""
+    from PySide6.QtGui import QImage
+
+    pill.set_state("armed")
+    settle(pill)
+    img = QImage(pill.size(), QImage.Format_ARGB32)
+    img.fill(0)
+    pill.render(img)
+
+    from murmur.ui.pill import ACCENT
+    accent = ACCENT["armed"]
+    hits = 0
+    for y in range(img.height()):
+        for x in range(img.width()):
+            c = img.pixelColor(x, y)
+            if c.alpha() > 40 and abs(c.red() - accent.red()) < 30 \
+                    and abs(c.blue() - accent.blue()) < 30 \
+                    and abs(c.green() - accent.green()) < 30:
+                hits += 1
+    assert hits < 12, f"{hits} accent-coloured pixels inside the resting pill"
+
+
+def test_recording_still_draws_its_bars(pill):
+    """The counterweight — proving the test above is measuring the right thing."""
+    from PySide6.QtGui import QImage
+
+    pill.set_state("recording", "hold")
+    pill.set_level(0.02)
+    settle(pill)
+    img = QImage(pill.size(), QImage.Format_ARGB32)
+    img.fill(0)
+    pill.render(img)
+
+    from murmur.ui.pill import ACCENT
+    accent = ACCENT["recording"]
+    hits = sum(
+        1
+        for y in range(img.height())
+        for x in range(img.width())
+        if (lambda c: c.alpha() > 40 and abs(c.red() - accent.red()) < 40
+            and abs(c.blue() - accent.blue()) < 40)(img.pixelColor(x, y))
+    )
+    assert hits > 100, f"only {hits} accent pixels while recording"

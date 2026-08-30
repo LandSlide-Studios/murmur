@@ -416,9 +416,10 @@ class Pill(QWidget):
 
         p.setClipPath(path)
 
-        if self.state == "armed":
-            self._draw_bars(p, rect, accent, rect)
-        elif self.state == "recording":
+        # Armed draws nothing inside itself. It is the resting indicator — a
+        # plain dark capsule saying Murmur is loaded. Bars in it read as
+        # listening, which it is not doing.
+        if self.state == "recording":
             self._draw_controls(p, rect, accent)
         elif self.state in WORKING:
             self._draw_orb(p, rect, accent)
