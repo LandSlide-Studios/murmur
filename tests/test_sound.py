@@ -6,9 +6,10 @@ from pathlib import Path
 import numpy as np
 
 from murmur.audio import Recorder
-from murmur.sound import CUES, Sounds
+from murmur.sound import CUES, DEFAULT_PACK, PACKS, Sounds
 
-ASSETS = Path(__file__).resolve().parent.parent / "assets"
+ASSETS = Path(__file__).resolve().parent.parent / "assets" / "sounds" / DEFAULT_PACK
+SOUNDS_ROOT = ASSETS.parent
 
 
 def test_every_cue_file_exists():
@@ -127,3 +128,68 @@ def test_mute_also_keeps_cues_out_of_the_preroll():
     block = np.full(1600, 0.5, dtype=np.float32)
     r._callback(block.reshape(-1, 1), 1600, None, None)
     assert r.preroll.read_all().size == 0
+
+
+# --- the five packs, ported from Sotto ---
+
+def test_every_pack_has_every_cue():
+    for pack in PACKS:
+        for cue in CUES:
+            f = SOUNDS_ROOT / pack / f"{cue}.wav"
+            assert f.exists(), f"{pack}/{cue}.wav is missing"
+
+
+def test_every_pack_sounds_different_from_the_others():
+    """Six packs that render to the same bytes would be a porting mistake."""
+    import hashlib
+
+    seen = {}
+    for pack in PACKS:
+        digest = hashlib.sha256(
+            (SOUNDS_ROOT / pack / "ack.wav").read_bytes()).hexdigest()
+        assert digest not in seen, f"{pack} is identical to {seen.get(digest)}"
+        seen[digest] = pack
+
+
+def test_switching_packs_changes_which_files_are_used():
+    s = Sounds(enabled=True, pack="sotto")
+    if not s.enabled:
+        return
+    before = dict(s._paths)
+    assert s.set_pack("heartbeat") is True
+    assert s.pack == "heartbeat"
+    assert s._paths != before
+    assert all("heartbeat" in v for v in s._paths.values())
+
+
+def test_an_unknown_pack_is_refused_and_the_current_one_kept():
+    s = Sounds(enabled=True, pack="sotto")
+    assert s.set_pack("does_not_exist") is False
+    assert s.pack == "sotto"
+
+
+def test_an_unknown_pack_at_construction_falls_back_to_the_default():
+    assert Sounds(enabled=True, pack="nope").pack == DEFAULT_PACK
+
+
+def test_durations_survive_a_pack_switch():
+    s = Sounds(enabled=True, pack="sotto")
+    if not s.enabled:
+        return
+    s.set_pack("wood_bar")
+    for cue in CUES:
+        assert s.duration_ms(cue) > 0, cue
+
+
+def test_the_breath_pack_really_is_quieter_than_heartbeat():
+    """Sotto describes breath as 'pure air, almost silent' and heartbeat as
+    pulses you feel. If the port were wrong they would not differ."""
+    import numpy as np
+
+    def rms(pack, cue):
+        with wave.open(str(SOUNDS_ROOT / pack / f"{cue}.wav"), "rb") as w:
+            x = np.frombuffer(w.readframes(w.getnframes()),
+                              dtype=np.int16).astype(np.float64) / 32768
+        return float(np.sqrt(np.mean(x ** 2)))
+
+    assert rms("breath", "arrive") < rms("heartbeat", "arrive")

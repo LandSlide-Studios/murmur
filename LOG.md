@@ -2,6 +2,46 @@
 
 Newest first. What shipped, what failed, and why.
 
+## 2026-08-30 — sound packs, orb charge, and why dictations "did not send"
+
+**The "sometimes it does not send" report was diagnosed, not guessed at.**
+Tommy's `history.db` had not been written since the previous afternoon, yet the
+log showed nine dictations that morning. The running instance turned out to be
+hours behind the working tree, and its log had no startup block at all — so
+there was no way to tell which build was producing the failures.
+
+Two gaps, both now closed:
+
+1. **The build is stamped at startup.** `Murmur 19cf9ca+dirty ready`. A running
+   instance can be hours old, and "does it send?" is unanswerable without
+   knowing what is running.
+2. **Every dictation writes a delivery receipt** — pasted, or clipboard only,
+   with the reason. A successful session and a silently undelivered one used to
+   log the same thing: nothing.
+
+After restarting on the current build the log immediately showed
+`cleanup model ready`, a line that had never appeared before. That is the actual
+cause of the nine failures: the old build's warm-up used the normal adaptive
+timeout, so a cold Ollama load failed the warm-up itself and left every
+dictation paying the load cost inside its own timeout.
+
+**Six sound packs** ported from Sotto, switchable from the tray, playing on
+selection so the choice is made by ear.
+
+The porting mistake worth recording: the first version **normalised every file
+to the same peak**, which flattened the entire design — "Breath — almost silent"
+came out exactly as loud as "Heartbeat — pulses you feel". Sotto renders each
+cue at its designed gain behind a 0.9 master. Caught by a test asserting breath
+should be quieter than heartbeat, which existed only because their descriptions
+made the claim checkable. Measured after the fix: breath ack 0.007 RMS,
+heartbeat arrive 0.097.
+
+**The orb charge.** While the model works the capsule contracts to a glowing
+orb that breathes, rather than staying a waveform. The shape has to be one that
+cannot be mistaken for "still listening".
+
+294 unit tests, 17/17 system checks.
+
 ## 2026-08-29 (night) — the comet, adapted from Sotto
 
 Tommy found https://github.com/kingbootoshi/sotto and wanted its UI on Windows.

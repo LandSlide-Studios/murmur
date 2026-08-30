@@ -67,8 +67,26 @@ from `.ultraThinMaterial`; Windows has no per-shape equivalent, and faking one
 would mean clipping the window to the capsule with `SetWindowRgn` and resizing
 it every frame through the morph — aliased edges for a worse result.
 
+## Sotto — the sound packs
+
+All six of Sotto's packs are ported, recipe for recipe, in
+`scripts/make_sounds.py`: sotto, velvet_thud, warm_glass, wood_bar, breath and
+heartbeat. Switchable from the tray.
+
+One thing that had to be got right: the files are **not** normalised. Sotto
+renders each cue at its designed gain behind a 0.9 master, and per-file
+normalisation would have made "Breath — pure air, almost silent" exactly as loud
+as "Heartbeat — pulses you feel", flattening the design into six variations on
+the same volume. Measured on the shipped files, breath's ack sits at 0.007 RMS
+against heartbeat's arrive at 0.097 — the order their descriptions imply.
+
+## Sotto — the orb charge
+
+While the model works, the capsule contracts to a glowing orb that breathes,
+as Sotto's overlay does. The point is that the shape must be one you cannot
+mistake for "still listening".
+
 ### What was not taken
 
 Sotto's transcription runs Parakeet TDT on Apple's Neural Engine, which has no
-Windows equivalent; Murmur uses faster-whisper on CUDA. Sotto ships five sound
-packs; only the certified "sotto" set is ported here.
+Windows equivalent; Murmur uses faster-whisper on CUDA.

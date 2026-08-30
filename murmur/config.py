@@ -45,7 +45,7 @@ DEFAULTS = {
         "max_growth_ratio": 1.4,
         "min_shrink_ratio": 0.6,
     },
-    "sound": {"enabled": True},
+    "sound": {"enabled": True, "pack": "sotto"},
     "clipboard": {"restore_previous": False},
     "learning": {"enabled": True, "promote_after_hits": 2, "uia_readback": True},
     "ui": {"pill_position": "right-center", "pill_offset_px": 12,

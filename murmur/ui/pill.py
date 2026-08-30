@@ -44,7 +44,10 @@ REC_SIZE = (34, 150)
 # Hands-free is visibly taller. With no text, size is what distinguishes a
 # session you can walk away from.
 TOGGLE_SIZE = (34, 208)
-WORK_SIZE = (34, 126)          # transcribing / cleaning up
+# Working: the capsule contracts to an orb and pulses while the model runs.
+# Sotto's overlay does the same, and the point is that a shape you cannot
+# mistake for 'listening' is what tells you it has stopped recording.
+WORK_SIZE = (30, 30)
 DONE_SIZE = (34, 92)
 # Contracted to a dot as the comet takes over, so the pill appears to
 # become the thing that flies rather than vanishing beside it.
@@ -69,6 +72,9 @@ GLASS_SHEEN = QColor(255, 255, 255, 26)
 RIM_LAP_S = 2.25
 RIM_LENGTH = 0.18
 RIM_SAMPLES = 26
+
+# Sotto pulses the orb with easeIn(0.24).repeatForever(autoreverses: true).
+ORB_PULSE_S = 0.48
 
 ACCENT = {
     "armed": QColor("#5B8DEF"),
@@ -122,6 +128,7 @@ class Pill(QWidget):
 
         self.sweep = 0.0
         self.rim = 0.0
+        self.orb = 0.0
         self.shake = 0.0
         self._hold_frames = 0
         self._hardened = False
@@ -305,6 +312,7 @@ class Pill(QWidget):
             self.bars.breathe(dt)
         elif self.state in WORKING:
             self.sweep = (self.sweep + dt * 0.9) % 1.0
+            self.orb = (self.orb + dt / ORB_PULSE_S) % 1.0
         if self.state in ACTIVE:
             self.rim = (self.rim + dt / RIM_LAP_S) % 1.0
 
@@ -377,7 +385,7 @@ class Pill(QWidget):
         if self.state in ("armed", "recording"):
             self._draw_bars(p, rect, accent)
         elif self.state in WORKING:
-            self._draw_dots(p, rect, accent)
+            self._draw_orb(p, rect, accent)
         elif self.state in ("done", "copied"):
             self._draw_check(p, rect, accent)
         elif self.state in ("cancelled", "error"):
@@ -443,20 +451,36 @@ class Pill(QWidget):
                 QRectF(cx - length / 2, y, length, thickness),
                 thickness / 2, thickness / 2)
 
-    def _draw_dots(self, p, rect, accent) -> None:
-        """Amber dots travelling up the capsule while it transcribes and cleans
-        up. A progress cue, not decoration."""
-        inset = 16.0
-        span = max(4.0, rect.height() - inset * 2)
-        cy = rect.bottom() - inset - self.sweep * span
-        cx = rect.center().x()
+    def _draw_orb(self, p, rect, accent) -> None:
+        """The charge: a glowing orb that breathes while the model works.
+
+        It is deliberately not a smaller waveform. The shape has to be one you
+        cannot mistake for 'still listening' — that is what tells you the
+        recording has stopped and the machine has taken over.
+        """
+        from PySide6.QtGui import QRadialGradient
+
+        # Triangle wave rather than a sine: the swell is meant to feel like
+        # something charging, which wants a firmer top than a sine gives.
+        phase = abs(self.orb * 2.0 - 1.0)
+        breathe = 0.72 + 0.28 * phase
+        r = min(rect.width(), rect.height()) * 0.30 * breathe
+        c = rect.center()
+
         p.setPen(Qt.NoPen)
-        for i in range(7):
-            c = QColor(accent)
-            c.setAlpha(int(230 * (1.0 - i / 7.0)))
-            p.setBrush(c)
-            r = 3.0 - i * 0.22
-            p.drawEllipse(QPointF(cx, cy + i * 6.4), r, r)
+        for mult, alpha in ((2.5, 0.14), (1.7, 0.26)):
+            halo = QColor(accent)
+            halo.setAlphaF(alpha * breathe)
+            p.setBrush(halo)
+            p.drawEllipse(c, r * mult, r * mult)
+
+        grad = QRadialGradient(QPointF(c.x() - r * 0.25, c.y() - r * 0.32), r * 1.7)
+        hot = QColor(accent).lighter(140)
+        cool = QColor(accent).darker(150)
+        grad.setColorAt(0.0, hot)
+        grad.setColorAt(1.0, cool)
+        p.setBrush(grad)
+        p.drawEllipse(c, r, r)
 
     def _draw_check(self, p, rect, accent) -> None:
         """Strokes itself on: the tick is drawn to a fraction of its length."""

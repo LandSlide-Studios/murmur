@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 from .app import MurmurApp, data_dir
 from .config import Config
 from .platform.win import autostart, single_instance
+from .version import build_id
 from .ui.comet import Comet
 from .ui.pill import Pill
 
@@ -211,7 +212,7 @@ def main() -> int:
 
     tray = Tray(murmur, show_history, show_vocab, quit_app,
                 autostart_command=autostart.default_command(),
-                on_listening=on_listening)
+                on_listening=on_listening, cfg=cfg)
 
     # First run honours the configured default; after that the tray checkbox
     # is the source of truth and the config is not re-applied.
@@ -236,8 +237,8 @@ def main() -> int:
 
     pill.set_state("armed")
 
-    log.info("Murmur ready - hold Ctrl+Win to dictate, "
-             "Ctrl+Win+Space for hands-free, Esc to cancel")
+    log.info("Murmur %s ready - hold Ctrl+Win to dictate, "
+             "Ctrl+Win+Space for hands-free, Esc to cancel", build_id())
     try:
         return app.exec()
     finally:

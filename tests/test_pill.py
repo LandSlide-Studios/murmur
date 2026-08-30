@@ -35,13 +35,34 @@ def test_the_armed_indicator_is_small_and_dim(pill):
     assert 0.3 < pill.opacity.value < 0.8, "visible at a glance, easy to ignore"
 
 
-def test_the_armed_indicator_is_the_smallest_state(pill):
-    """It has to read as 'running', not as 'something is happening'."""
+def test_the_armed_indicator_is_the_least_prominent_state(pill):
+    """It has to read as 'running', not as 'something is happening'. The orb is
+    square rather than tall, so compare area, not both dimensions."""
     from murmur.ui.pill import REC_SIZE, TOGGLE_SIZE, WORK_SIZE
 
+    idle_area = IDLE_SIZE[0] * IDLE_SIZE[1]
     for other in (REC_SIZE, TOGGLE_SIZE, WORK_SIZE):
-        assert IDLE_SIZE[0] < other[0]
-        assert IDLE_SIZE[1] < other[1]
+        assert IDLE_SIZE[0] < other[0], "the sliver must be the narrowest"
+        assert idle_area <= other[0] * other[1]
+
+
+def test_working_contracts_to_an_orb(pill):
+    """A shape you cannot mistake for 'still listening' is what tells you the
+    recording has stopped and the machine has taken over."""
+    from murmur.ui.pill import REC_SIZE, WORK_SIZE
+
+    w, h = WORK_SIZE
+    assert abs(w - h) <= 4, "the working state should read as round"
+    assert h < REC_SIZE[1] / 2, "it must be obviously shorter than listening"
+
+
+def test_the_orb_pulses(pill):
+    pill.set_state("transcribing")
+    seen = set()
+    for _ in range(60):
+        pill._tick()
+        seen.add(round(pill.orb, 3))
+    assert len(seen) > 10, "the orb should breathe, not sit still"
 
 
 def test_the_pill_is_vertical(pill):

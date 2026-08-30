@@ -78,7 +78,8 @@ class MurmurApp:
             max_growth_ratio=cfg.get("polish.max_growth_ratio"),
             min_shrink_ratio=cfg.get("polish.min_shrink_ratio"),
         )
-        self.sounds = Sounds(enabled=cfg.get("sound.enabled", True))
+        self.sounds = Sounds(enabled=cfg.get("sound.enabled", True),
+                             pack=cfg.get("sound.pack", "sotto"))
         self.vad = SilenceMonitor(
             threshold=cfg.get("audio.speech_rms_threshold"),
             stop_after_s=cfg.get("audio.silence_stop_seconds"),
@@ -216,6 +217,20 @@ class MurmurApp:
     # before the chord went down, so this only mutes the moment the keys are
     # being pressed. The silence guard in _process is the backstop.
     CUE_MUTE_SLACK_MS = 400
+
+    @staticmethod
+    def _receipt(mode: str, text: str, delivery: str) -> None:
+        """One line per dictation saying whether it actually landed.
+
+        'It does not send sometimes' was impossible to diagnose because a
+        successful session and a silently undelivered one logged the same
+        thing: nothing.
+        """
+        preview = " ".join(text.split())
+        if len(preview) > 70:
+            preview = preview[:67] + "..."
+        log.info("[%s] %s -> %s | %s", mode, delivery, preview,
+                 f"{len(text)} chars")
 
     @staticmethod
     def _cursor_point():
@@ -371,21 +386,23 @@ class MurmurApp:
                 final = self.vocab.apply(polished)
                 if session.cancelled:
                     status = "cancelled"
-                elif self.cfg.get("ui.comet", True):
+                elif not self.cfg.get("ui.comet", True):
+                    pasted = self.injector.inject(final)
+                    self._cue("done")
+                    self._receipt(mode, final, "pasted" if pasted else "clipboard only")
+                    self.on_state("done" if pasted else "copied", text=final)
+                else:
                     # The transcript is on the clipboard BEFORE anything moves,
                     # so a failed animation can never cost the user their words.
                     released = self.injector.copy(final)
                     self._cue("launch")
-                    log.info("[%s] %s", mode, final)
                     if released:
+                        self._receipt(mode, final, "pasted")
                         self.on_state("flying", text=final, aim=self._aim)
                     else:
+                        self._receipt(mode, final, "clipboard only "
+                                      "(a modifier was still held)")
                         self.on_state("copied", text=final)
-                else:
-                    pasted = self.injector.inject(final)
-                    self._cue("done")
-                    log.info("[%s] %s", mode, final)
-                    self.on_state("done" if pasted else "copied", text=final)
         except Exception:
             log.exception("dictation failed")
             status = "error"

@@ -7,10 +7,12 @@ icon has to communicate state on its own: filled when armed, hollow when paused.
 import logging
 
 from PySide6.QtCore import QRectF, Qt
-from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap
+from PySide6.QtGui import (QAction, QActionGroup, QColor, QIcon, QPainter,
+                           QPen, QPixmap)
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
 from ..platform.win import autostart
+from ..sound import PACKS
 from .theme import ACCENT, INK_3
 
 log = logging.getLogger(__name__)
@@ -46,12 +48,22 @@ def _icon(active: bool) -> QIcon:
 
 
 class Tray(QSystemTrayIcon):
+    LABELS = {
+        "sotto": "Sotto — wood, felt and a swell",
+        "velvet_thud": "Velvet Thud — sub pulses you feel",
+        "warm_glass": "Warm Glass — muted mallet tones",
+        "wood_bar": "Wood Bar — round marimba notes",
+        "breath": "Breath — pure air, almost silent",
+        "heartbeat": "Heartbeat — lub-dub pulses",
+    }
+
     def __init__(self, app, on_history, on_vocab, on_quit,
-                 autostart_command=None, on_listening=None):
+                 autostart_command=None, on_listening=None, cfg=None):
         super().__init__(_icon(True))
         self.app = app
         self._autostart_command = autostart_command
         self._on_listening = on_listening
+        self._cfg = cfg
 
         menu = QMenu()
 
@@ -68,6 +80,25 @@ class Tray(QSystemTrayIcon):
         vocab_action = QAction("Vocabulary…", menu)
         vocab_action.triggered.connect(on_vocab)
         menu.addAction(vocab_action)
+        menu.addSeparator()
+
+        sounds_menu = menu.addMenu("Sounds")
+        self._sound_group = QActionGroup(sounds_menu)
+        self._sound_group.setExclusive(True)
+        current = getattr(app.sounds, "pack", "sotto")
+        for pack in PACKS:
+            act = QAction(self.LABELS.get(pack, pack), sounds_menu, checkable=True)
+            act.setChecked(pack == current)
+            act.setData(pack)
+            act.triggered.connect(
+                lambda _checked, p=pack: self._choose_pack(p))
+            self._sound_group.addAction(act)
+            sounds_menu.addAction(act)
+        sounds_menu.addSeparator()
+        self.mute_action = QAction("Mute", sounds_menu, checkable=True)
+        self.mute_action.setChecked(not app.sounds.enabled)
+        self.mute_action.toggled.connect(self._toggle_mute)
+        sounds_menu.addAction(self.mute_action)
         menu.addSeparator()
 
         self.autostart_action = QAction("Launch at login", menu, checkable=True)
@@ -102,6 +133,30 @@ class Tray(QSystemTrayIcon):
         self._refresh_tooltip(on)
         if self._on_listening is not None:
             self._on_listening(on)
+
+    def _choose_pack(self, pack: str) -> None:
+        """Switch packs and play the new ack, so the choice is audible at the
+        moment it is made rather than on the next dictation."""
+        if not self.app.sounds.set_pack(pack):
+            return
+        if self._cfg is not None:
+            try:
+                self._cfg.set("sound.pack", pack)
+                self._cfg.save()
+            except Exception:
+                log.warning("could not persist the sound pack", exc_info=True)
+        self.app.sounds.play("start")
+
+    def _toggle_mute(self, muted: bool) -> None:
+        self.app.sounds.enabled = not muted
+        if self._cfg is not None:
+            try:
+                self._cfg.set("sound.enabled", not muted)
+                self._cfg.save()
+            except Exception:
+                log.warning("could not persist the mute setting", exc_info=True)
+        if not muted:
+            self.app.sounds.play("start")
 
     def _toggle_autostart(self, on: bool) -> None:
         if not autostart.set_enabled(on, self._autostart_command):

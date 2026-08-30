@@ -39,7 +39,7 @@ it, so the change is one continuous morph.
 | Armed | Thin dim sliver with slowly breathing dots |
 | Listening | 34x150, eleven bars whose length tracks your voice |
 | Hands-free | The same, 208 tall — size is what tells the two modes apart |
-| Transcribing / cleaning up | Amber dots travelling up the capsule |
+| Transcribing / cleaning up | Contracts to a glowing orb that breathes while the model works |
 | Done | Green tick, then it shrinks back to the sliver |
 | Cancelled | Red bar and a nudge |
 
@@ -56,6 +56,13 @@ The glass is painted rather than a real backdrop blur. macOS gets that free from
 mean clipping the window to the capsule and resizing it every frame.
 
 It is click-through and never takes focus, so it cannot swallow the paste.
+
+### The charge
+
+While the model is working, the capsule contracts to a **glowing orb** that
+breathes. That is deliberately not a smaller waveform: the shape has to be one
+you cannot mistake for "still listening", so it tells you the recording has
+stopped and the machine has taken over. Also Sotto's.
 
 ### The comet
 
@@ -196,7 +203,8 @@ what you changed is written back, so upgrades keep reaching you.
 | `clipboard.restore_previous` | `false` | `true` puts your old clipboard back after pasting. |
 | `learning.enabled` | `true` | Vocabulary learning. |
 | `learning.promote_after_hits` | `2` | Sightings before an automatic correction applies. |
-| `sound.enabled` | `true` | Start / done / cancel tones. |
+| `sound.enabled` | `true` | Audio cues. |
+| `sound.pack` | `sotto` | One of six packs; also in the tray. |
 | `ui.idle_indicator` | `true` | Show the dim sliver between dictations. |
 | `ui.comet` | `true` | Throw the transcript to your cursor on finish. |
 | `ui.pill_offset_px` | `12` | Gap between the pill and the right edge. |
@@ -230,7 +238,18 @@ This is the only thing that will make Murmur talk to the internet.
 | Nothing is transcribed | Wrong microphone | Set `audio.device` to a device index |
 | Cleanup stopped working | Ollama is not running | `ollama serve`, or set `polish.enabled` to `false` |
 
-Logs are at `%APPDATA%\Murmur\murmur.log`.
+Logs are at `%APPDATA%\Murmur\murmur.log`. Every dictation writes one line
+saying whether the text was **pasted** or only reached the **clipboard**, and
+startup stamps the build it is running:
+
+```
+15:20:35 INFO  murmur: Murmur 19cf9ca ready - hold Ctrl+Win to dictate...
+15:21:04 INFO  murmur.app: [hold] pasted -> Send the proposal over tomorrow. | 33 chars
+```
+
+If a dictation seems not to have sent, that line says which half failed. A
+running instance can be hours behind the working tree, so check the build stamp
+before anything else.
 
 ---
 
