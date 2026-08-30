@@ -16,6 +16,7 @@ import urllib.request
 log = logging.getLogger(__name__)
 
 OLLAMA_URL = "http://127.0.0.1:11434/api/chat"
+KEEP_ALIVE = "30m"
 
 # --- Prompt v3. Do not simplify this. Two earlier versions failed measurably ---
 #
@@ -64,7 +65,12 @@ _NUM_PREDICT = 4096
 # Timeout scales with transcript length. A fixed 4s was calibrated on 20-word
 # samples and silently failed past ~300 words, handing back raw unpunctuated
 # text with only a log line to show for it.
-_TIMEOUT_BASE_S = 4.0
+# Raised from 4s. That was calibrated with the model warm and alone on the GPU.
+# In practice Whisper (~1.2GB) and the cleanup model (~5GB) share an 8GB card,
+# so a request can wait behind a reload. The raw transcript is still pasted on a
+# timeout, so the only cost of a longer budget is latency when the machine is
+# busy — and the p50 is unchanged at ~0.6s.
+_TIMEOUT_BASE_S = 8.0
 _TIMEOUT_PER_1K_CHARS_S = 6.0
 _TIMEOUT_MAX_S = 60.0
 
@@ -148,6 +154,11 @@ class Polisher:
                 "model": self.model,
                 "messages": messages,
                 "stream": False,
+                # Keep the model resident. Ollama unloads an idle model after a
+                # few minutes, and the reload lands inside the next dictation's
+                # timeout — which is exactly how a real dictation came back
+                # unpolished with only a log line to show for it.
+                "keep_alive": KEEP_ALIVE,
                 "options": {"temperature": 0.0, "num_predict": _NUM_PREDICT},
             }
         ).encode()

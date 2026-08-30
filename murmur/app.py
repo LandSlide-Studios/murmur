@@ -364,45 +364,47 @@ class MurmurApp:
             if rms(pcm) < self.cfg.get("audio.speech_rms_threshold") / 2:
                 log.info("recording is silent (%.1fs); nothing to transcribe",
                          dur_ms / 1000)
-                self.history.add(raw=None, polished=None, final=None, mode=mode,
-                                 duration_ms=dur_ms, app="", title="",
-                                 status="empty")
-                self.on_state("idle")
-                return
-            raw = self.stt.transcribe(pcm, hotwords=self.vocab.hotwords())
-            if session.cancelled:
-                status = "cancelled"
-            elif not raw.strip():
-                log.info("nothing transcribed (%.1fs of audio)", dur_ms / 1000)
+                # Set the status and fall through: the finally block writes the
+                # row. Writing it here AND returning produced two rows for one
+                # session — an "empty" one plus an "ok" one with no text at all.
                 status = "empty"
             else:
-                self.on_state("polishing")
-                # The glossary already gives the model the correct spellings, so
-                # substitution runs ONCE, after polish. Running it on both sides
-                # doubled any term whose replacement contained its own wrong
-                # form ("vantage" -> "Vantage Labs" -> "Vantage Labs Labs").
-                polished = self.polisher.polish(
-                    raw, glossary=self.vocab.glossary())
-                final = self.vocab.apply(polished)
+                raw = self.stt.transcribe(pcm, hotwords=self.vocab.hotwords())
                 if session.cancelled:
                     status = "cancelled"
-                elif not self.cfg.get("ui.comet", True):
-                    pasted = self.injector.inject(final)
-                    self._cue("done")
-                    self._receipt(mode, final, "pasted" if pasted else "clipboard only")
-                    self.on_state("done" if pasted else "copied", text=final)
+                elif not raw.strip():
+                    log.info("nothing transcribed (%.1fs of audio)", dur_ms / 1000)
+                    status = "empty"
                 else:
-                    # The transcript is on the clipboard BEFORE anything moves,
-                    # so a failed animation can never cost the user their words.
-                    released = self.injector.copy(final)
-                    self._cue("launch")
-                    if released:
-                        self._receipt(mode, final, "pasted")
-                        self.on_state("flying", text=final, aim=self._aim)
+                    self.on_state("polishing")
+                    # The glossary already gives the model the correct spellings,
+                    # so substitution runs ONCE, after polish. Running it on both
+                    # sides doubled any term whose replacement contained its own
+                    # wrong form ("vantage" -> "Vantage Labs" -> "... Labs Labs").
+                    polished = self.polisher.polish(
+                        raw, glossary=self.vocab.glossary())
+                    final = self.vocab.apply(polished)
+                    if session.cancelled:
+                        status = "cancelled"
+                    elif not self.cfg.get("ui.comet", True):
+                        pasted = self.injector.inject(final)
+                        self._cue("done")
+                        self._receipt(mode, final,
+                                      "pasted" if pasted else "clipboard only")
+                        self.on_state("done" if pasted else "copied", text=final)
                     else:
-                        self._receipt(mode, final, "clipboard only "
-                                      "(a modifier was still held)")
-                        self.on_state("copied", text=final)
+                        # The transcript is on the clipboard BEFORE anything
+                        # moves, so a failed animation can never cost the user
+                        # their words.
+                        released = self.injector.copy(final)
+                        self._cue("launch")
+                        if released:
+                            self._receipt(mode, final, "pasted")
+                            self.on_state("flying", text=final, aim=self._aim)
+                        else:
+                            self._receipt(mode, final, "clipboard only "
+                                          "(a modifier was still held)")
+                            self.on_state("copied", text=final)
         except Exception:
             log.exception("dictation failed")
             status = "error"

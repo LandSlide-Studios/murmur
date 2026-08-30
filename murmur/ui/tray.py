@@ -112,6 +112,10 @@ class Tray(QSystemTrayIcon):
         menu.addAction(quit_action)
 
         self.setContextMenu(menu)
+        # Double-clicking the tray icon opens History. Every dictation is
+        # stored, and the panel was the least discoverable part of the app.
+        self._on_history = on_history
+        self.activated.connect(self._on_activated)
         self._refresh_tooltip(True)
         self.show()
 
@@ -133,6 +137,10 @@ class Tray(QSystemTrayIcon):
         self._refresh_tooltip(on)
         if self._on_listening is not None:
             self._on_listening(on)
+
+    def _on_activated(self, reason) -> None:
+        if reason == QSystemTrayIcon.DoubleClick:
+            self._on_history()
 
     def _choose_pack(self, pack: str) -> None:
         """Switch packs and play the new ack, so the choice is audible at the

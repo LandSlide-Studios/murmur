@@ -197,3 +197,36 @@ def test_a_session_started_externally_can_be_cancelled_with_esc(app):
     app._start("toggle", external=True)
     acts = app.hotkeys.fsm.feed(Ev("down", "esc", 1000))
     assert Act.CANCEL in acts
+
+
+def test_a_silent_recording_writes_exactly_one_history_row(app, monkeypatch):
+    """The silence guard used to write its own 'empty' row and then return, but
+    the finally block still ran — two rows for one session, the second claiming
+    status 'ok' with no text in it."""
+    import numpy as np
+
+    monkeypatch.setattr(app, "_stt", object())      # must never be reached
+    silence = np.zeros(16000, dtype=np.float32)
+    app._process(silence, A.Session(1, "hold"), 1000)
+    rows = app.history.recent()
+    assert len(rows) == 1, f"{len(rows)} rows written for one session"
+    assert rows[0]["status"] == "empty"
+    assert rows[0]["final_text"] is None
+
+
+def test_a_real_recording_also_writes_exactly_one_row(app, monkeypatch):
+    import numpy as np
+
+    class FakeStt:
+        def transcribe(self, pcm, hotwords):
+            return "hello there"
+
+    monkeypatch.setattr(app, "_stt", FakeStt())
+    monkeypatch.setattr(app.polisher, "enabled", False)
+    monkeypatch.setattr(app.injector, "copy", lambda t: True)
+    loud = np.full(16000, 0.3, dtype=np.float32)
+    app._process(loud, A.Session(2, "hold"), 1000)
+    rows = app.history.recent()
+    assert len(rows) == 1
+    assert rows[0]["status"] == "ok"
+    assert rows[0]["final_text"] == "hello there"

@@ -282,3 +282,35 @@ def test_warm_is_a_noop_when_polish_is_disabled(monkeypatch):
     monkeypatch.setattr(p, "_call",
                         lambda *a, **k: (_ for _ in ()).throw(AssertionError("called")))
     assert p.warm() is False
+
+
+def test_the_request_keeps_the_model_resident(monkeypatch):
+    """Ollama unloads an idle model, and the reload lands inside the NEXT
+    dictation's timeout — which is how a real dictation came back unpolished."""
+    import json
+
+    seen = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return json.dumps({"message": {"content": "Ok."}}).encode()
+
+    def fake_urlopen(req, timeout=None):
+        seen["body"] = json.loads(req.data)
+        return FakeResponse()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    Polisher(model="x").polish("um hello there")
+    assert seen["body"].get("keep_alive"), "the model will be unloaded between uses"
+
+
+def test_the_base_timeout_leaves_room_for_a_busy_gpu():
+    """Whisper and the cleanup model share an 8GB card; a request can wait
+    behind a reload. 4s was calibrated warm and alone."""
+    assert Polisher(model="x")._timeout_for("hello") >= 8.0

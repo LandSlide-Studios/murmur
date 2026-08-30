@@ -203,6 +203,10 @@ def main() -> int:
         murmur.stop()
         app.quit()
 
+    # The tick and cross on the pill.
+    pill.accepted.connect(murmur._stop_and_transcribe)
+    pill.cancelled_by_user.connect(murmur._cancel_session)
+
     def on_listening(active: bool):
         # The indicator is the honest answer to "can I dictate right now?", so
         # it must disappear the moment the hotkeys are paused.

@@ -446,3 +446,52 @@ sounddevice 0.5.6, comtypes 1.4.16.
 No GPU claim until an observed run.
 
 **Not started.** No implementation code. Awaiting queue approval.
+
+## 2026-08-30 — pill controls, tighter meter, and two real bugs behind it
+
+**Asked for:** bars closer together and taller, a smaller pill, a checkmark and an
+X on it, and a way to find past dictations.
+
+**The meter.** 15 bars at a 1.4px gap. The old spacing let them read as separate
+indicators; packed this tight they read as one waveform, which is the thing that
+actually communicates "it is hearing you." Capsule down to 30×138 recording,
+11×52 armed.
+
+**The controls.** Tick at the top (stop and paste), cross at the bottom (discard).
+These are the first pixels in Murmur that accept a click, and a click is exactly
+what the pill has spent its whole life avoiding — if it ever takes focus, the
+paste lands in the pill instead of the user's editor. Resolved by separating the
+two window flags rather than trading one for the other: `WS_EX_TRANSPARENT` is
+dropped only while the controls are on screen, `WS_EX_NOACTIVATE` never comes off.
+Verified live: during recording clicks land, foreground window unchanged, pill not
+foreground; while armed clicks pass straight through.
+
+Below `BUTTON_MIN_H` (96px) the capsule is too short to hold controls and they are
+not drawn — the armed dot never sprouts buttons.
+
+**History was never broken.** 26 rows on disk including the message that asked
+this question. It was undiscoverable, not missing. Tray double-click now opens it.
+
+**Two bugs found on the way:**
+
+1. *Duplicate history rows.* The silence guard wrote an `empty` row and returned;
+   the `finally` block then wrote a second row claiming `ok` with NULL text. One
+   session, two rows, one of them a lie. Fixed by setting the status and falling
+   through so a single writer owns the row.
+
+2. *Cleanup silently skipped.* `verify.py` failed the localhost-cleanup check
+   while Ollama itself reported up. Cause was VRAM, not the service: Whisper
+   (~1.2GB) and qwen2.5:7b (~5GB) share an 8GB card at 6517/8151 MiB used, and
+   Ollama unloads an idle model — the reload then landed inside the next
+   dictation's 4s timeout, which had been calibrated with the model warm and
+   alone. Fixed with `keep_alive: 30m` on the request and an 8s base budget. The
+   raw transcript was still pasted throughout, so nothing was ever lost; the
+   symptom was text arriving unpolished with only a log line to show for it.
+
+**Not from the design library.** Asked it for better references and it returned
+recipe cards and a broadsheet portfolio — it is a web design corpus, and there is
+nothing in it about a 30px audio meter. Designed against the Wispr reference
+instead. Recorded here so the next session does not re-run that query expecting
+something else.
+
+313 tests, 17/17 checks.

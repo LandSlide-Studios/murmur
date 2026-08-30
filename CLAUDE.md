@@ -54,6 +54,13 @@ Rebuild of Wispr Flow's behaviour on a local-only stack. Tommy's own tool, not c
   the raw transcript. Losing a dictation is worse than an unpolished one.
 - **Never simplify the polish prompt.** Two earlier versions failed measurably — see `LOG.md`.
   The delimiter and the worked example are both load-bearing.
+- **The pill's click-through is dynamic, not fixed.** `WS_EX_TRANSPARENT` is
+  removed only while the tick/cross are on screen and restored the moment they
+  leave. `WS_EX_NOACTIVATE` stays on throughout — the pill takes clicks without
+  ever taking focus, or the paste lands in the pill.
+- **One session writes exactly one history row.** The silence guard used to write
+  its own row and then return, while the `finally` block wrote a second one
+  claiming success with no text in it.
 - **Never claim GPU acceleration, or any verification, without an observed run.**
 
 ## Locked decisions
@@ -87,12 +94,12 @@ Dated. Do not re-litigate without a reason that is new.
 
 ## State
 
-**Complete.** All six phases built and verified. 214 unit tests, 2 live tests,
-15/15 system checks via `scripts/verify.py`. Desktop shortcut and tray in place.
+**Complete and in daily use.** 313 unit tests, 2 live tests, 17/17 system checks
+via `scripts/verify.py`. Desktop shortcut, tray and launch-at-login in place.
 
 Two adversarial review passes have run against this code; their findings are fixed
 and pinned with regression tests. Do not undo a guard without reading why it exists —
 `LOG.md` records what each one caught.
 
-Nothing is pushed; there is no remote. Push and deploy need Tommy's explicit go per
-change set.
+Public at github.com/LandSlide-Studios/murmur (MIT). The remote exists, which makes
+the rule sharper rather than looser: push needs Tommy's explicit go per change set.

@@ -1,24 +1,21 @@
 """The floating status pill.
 
-A vertical capsule docked against the right bezel. When nothing is happening it
-sits there as a thin dim sliver — enough to answer "is Murmur running and can I
-dictate right now?", not enough to notice while you work. Starting a session
-grows that same element rather than swapping it, so the change is one
-continuous morph.
+A narrow vertical capsule against the right bezel. Idle, it is a thin dim sliver
+— enough to answer "is Murmur running and can I dictate right now?", not enough
+to notice. Starting a session grows that same element rather than swapping it,
+so the change is one continuous morph.
 
-Vertical rather than horizontal, so it lives in the dead space beside the
-screen edge instead of over the bottom of whatever is being worked in. That
-also means no text labels: state is carried by size, colour and motion, which
-is legible at a glance from the corner of your eye in a way a 8pt word is not.
+While recording it carries two controls: a tick at the top (stop and paste) and
+a cross at the bottom (cancel). The window becomes clickable ONLY then, and even
+then it never activates — an activated overlay would eat the very paste the tick
+just asked for.
 
 Two hard constraints, both from CLAUDE.md:
 
-  * It must NEVER take focus. If it activates, Ctrl+V lands in the pill instead
-    of the user's app and the dictation goes nowhere. Hence WS_EX_NOACTIVATE
-    plus Qt.Tool plus WA_ShowWithoutActivating plus click-through.
-  * No gradient, no glow. Checked against the design library: gradient is
-    refused by 100 independent critiques, glow by 19. Motion and a single
-    accent colour carry the design; the waveform is the visual interest.
+  * It must NEVER take focus. WS_EX_NOACTIVATE lets a window receive clicks
+    without activating, which is what makes the controls possible at all.
+  * No gradient, no glow on the capsule itself. Motion and one accent carry it;
+    the waveform is the visual interest.
 
 Everything animates off ONE 60fps timer through ONE spring integrator, so a
 state change that interrupts another blends instead of snapping.
@@ -27,53 +24,42 @@ state change that interrupts another blends instead of snapping.
 import ctypes
 import math
 
-from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Slot
+from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import (QColor, QLinearGradient, QPainter, QPainterPath,
-                           QPen)
+                           QPen, QRadialGradient)
 from PySide6.QtWidgets import QWidget
 
 from .motion import Spring
 from .waveform import BarModel
 
-BARS = 11
+# Packed tight: the bars nearly touch, so the row reads as one waveform rather
+# than a row of separate ticks.
+BARS = 15
+BAR_GAP = 1.4
 
-# (width, height). The capsule radius is always width/2, so it stays a true
-# pill at every size and the morph between them reads as one object.
-IDLE_SIZE = (13, 66)
-REC_SIZE = (34, 150)
-# Hands-free is visibly taller. With no text, size is what distinguishes a
-# session you can walk away from.
-TOGGLE_SIZE = (34, 208)
-# Working: the capsule contracts to an orb and pulses while the model runs.
-# Sotto's overlay does the same, and the point is that a shape you cannot
-# mistake for 'listening' is what tells you it has stopped recording.
-WORK_SIZE = (30, 30)
-DONE_SIZE = (34, 92)
-# Contracted to a dot as the comet takes over, so the pill appears to
-# become the thing that flies rather than vanishing beside it.
-LAUNCH_SIZE = (16, 16)
+# (width, height). The capsule radius is always width/2, so it stays a true pill
+# at every size and the morph between them reads as one object.
+IDLE_SIZE = (11, 52)
+REC_SIZE = (30, 138)
+TOGGLE_SIZE = (30, 172)
+WORK_SIZE = (26, 26)           # contracted to a charging orb
+DONE_SIZE = (30, 76)
 
-# Present enough to answer 'is Murmur running?' from the corner of your
-# eye, dim enough to ignore. Too faint and it is not an indicator at all.
+BUTTON_H = 22                  # the tick and cross caps at each end
+BUTTON_MIN_H = 96              # below this the capsule is too short for controls
+
 IDLE_OPACITY = 0.62
 
-# Glass, adapted from Sotto's overlay (see NOTICE.md): a translucent dark body
-# with a light top edge and a darker foot, so it reads as a lit pane rather than
-# a flat shape. macOS gets this free from .ultraThinMaterial; Windows has no
-# per-shape equivalent, so it is painted.
 BODY_TOP = QColor(38, 41, 48, 216)
 BODY_BOTTOM = QColor(11, 12, 15, 240)
 HAIRLINE = QColor(255, 255, 255, 30)
 GLASS_SHEEN = QColor(255, 255, 255, 26)
+CONTROL = QColor(255, 255, 255, 150)
+CONTROL_HOT = QColor(255, 255, 255, 245)
 
-# The rim light: two lines 180 degrees apart gliding the same direction, so
-# when one rides the top the other rides the bottom. Sotto's rim-variants5.html
-# variant 1: a 2.25s lap with each line covering 18% of the perimeter.
 RIM_LAP_S = 2.25
 RIM_LENGTH = 0.18
 RIM_SAMPLES = 26
-
-# Sotto pulses the orb with easeIn(0.24).repeatForever(autoreverses: true).
 ORB_PULSE_S = 0.48
 
 ACCENT = {
@@ -83,9 +69,9 @@ ACCENT = {
     "polishing": QColor("#E8B84B"),
     "done": QColor("#4ADE80"),
     "copied": QColor("#4ADE80"),
+    "launching": QColor("#4ADE80"),
     "cancelled": QColor("#EF4444"),
     "error": QColor("#EF4444"),
-    "launching": QColor("#4ADE80"),
 }
 
 ACTIVE = ("recording", "transcribing", "polishing")
@@ -96,24 +82,25 @@ HANDOFF = "launching"
 GWL_EXSTYLE = -20
 WS_EX_NOACTIVATE = 0x08000000
 WS_EX_TOOLWINDOW = 0x00000080
+WS_EX_TRANSPARENT = 0x00000020
 
 
 class Pill(QWidget):
+    accepted = Signal()        # tick: stop and paste
+    cancelled_by_user = Signal()   # cross: throw it away
+
     def __init__(self, offset_px: int = 12, show_when_idle: bool = True,
                  parent=None):
         super().__init__(
             parent,
-            Qt.FramelessWindowHint
-            | Qt.WindowStaysOnTopHint
-            | Qt.Tool
-            | Qt.WindowTransparentForInput,
+            Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool,
         )
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
-        self.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.setFocusPolicy(Qt.NoFocus)
+        self.setMouseTracking(True)
 
-        self.offset_px = offset_px          # distance from the right bezel
+        self.offset_px = offset_px
         self.show_when_idle = show_when_idle
         self.state = "off"
         self.mode = "hold"
@@ -123,7 +110,7 @@ class Pill(QWidget):
         self.opacity = Spring(0.0, stiffness=200, damping=24)
         self.width_s = Spring(float(IDLE_SIZE[0]), stiffness=190, damping=23)
         self.height_s = Spring(float(IDLE_SIZE[1]), stiffness=180, damping=22)
-        self.slide = Spring(14.0, stiffness=200, damping=24)   # in from the edge
+        self.slide = Spring(14.0, stiffness=200, damping=24)
         self.check = Spring(0.0, stiffness=200, damping=18)
 
         self.sweep = 0.0
@@ -132,22 +119,23 @@ class Pill(QWidget):
         self.shake = 0.0
         self._hold_frames = 0
         self._hardened = False
+        self._hover = None          # "accept" | "cancel" | None
+        # Starts click-through and stays that way until the controls appear.
+        # The attribute has to be set here as well as tracked, or the first
+        # _set_click_through(True) is a no-op against an unset attribute.
+        self._click_through = True
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
-        # Canvas: tallest state plus slide and shake headroom.
-        self.resize(REC_SIZE[0] + 48, TOGGLE_SIZE[1] + 40)
+        self.resize(REC_SIZE[0] + 44, TOGGLE_SIZE[1] + 36)
 
     # --- window plumbing --------------------------------------------------
 
     def _place(self) -> None:
         """Against the right bezel, vertically centred, on the screen the user
-        is actually working on.
-
-        A top-level widget that has never been moved reports the PRIMARY screen,
-        so placing from self.screen() put the pill on monitor 1 regardless of
-        where the focused window was. Follow the cursor instead.
-        """
+        is actually working on. A widget that has never moved reports the
+        PRIMARY screen, so follow the cursor instead."""
         screen = None
         try:
             from PySide6.QtGui import QCursor, QGuiApplication
@@ -164,65 +152,115 @@ class Pill(QWidget):
         if screen is None:
             return
         geo = screen.availableGeometry()
-        self.move(
-            int(geo.right() - self.width() + 1),
-            int(geo.center().y() - self.height() / 2),
-        )
+        self.move(int(geo.right() - self.width() + 1),
+                  int(geo.center().y() - self.height() / 2))
 
-    def capsule_centre(self):
-        """Centre of the drawn capsule in SCREEN coordinates.
-
-        The comet starts here, so it must be the capsule rather than the
-        window — the window is deliberately much larger to leave room for the
-        slide and shake.
-        """
-        from PySide6.QtCore import QPointF
-
-        w = max(3.0, self.width_s.value)
-        h = max(4.0, self.height_s.value)
-        local_x = self.width() - w - self.offset_px + self.slide.value + w / 2
-        local_y = self.height() / 2
-        top_left = self.mapToGlobal(self.rect().topLeft())
-        return QPointF(top_left.x() + local_x, top_left.y() + local_y)
-
-    def _harden(self) -> None:
-        """WS_EX_NOACTIVATE at the Win32 level. Qt's flags alone still allow the
-        window to be activated in some cases, and an activated pill eats the paste."""
-        if self._hardened:
-            return
+    def _ex_style(self, add: int = 0, remove: int = 0) -> None:
         try:
             hwnd = int(self.winId())
             u = ctypes.windll.user32
             ex = u.GetWindowLongW(hwnd, GWL_EXSTYLE)
-            u.SetWindowLongW(hwnd, GWL_EXSTYLE,
-                             ex | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW)
-            self._hardened = True
+            u.SetWindowLongW(hwnd, GWL_EXSTYLE, (ex | add) & ~remove)
         except Exception:
             pass
+
+    def _harden(self) -> None:
+        """WS_EX_NOACTIVATE is what lets the controls exist: the window can be
+        clicked without ever being activated, so the paste still lands in the
+        user's app."""
+        if self._hardened:
+            return
+        self._ex_style(add=WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW)
+        self._hardened = True
+
+    def _set_click_through(self, through: bool) -> None:
+        """Clicks pass straight through unless the controls are on screen.
+
+        An always-clickable overlay would swallow clicks on whatever sits
+        behind it, and it sits over the edge of a real window.
+        """
+        if through == self._click_through:
+            return
+        self._click_through = through
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, through)
+        if through:
+            self._ex_style(add=WS_EX_TRANSPARENT)
+            self._hover = None
+        else:
+            self._ex_style(remove=WS_EX_TRANSPARENT)
+
+    # --- geometry ---------------------------------------------------------
+
+    def _capsule_rect(self) -> QRectF:
+        w = max(3.0, self.width_s.value)
+        h = max(4.0, self.height_s.value)
+        dx = math.sin(self.shake * 40.0) * 5.0 * self.shake
+        return QRectF(self.width() - w - self.offset_px + self.slide.value + dx,
+                      (self.height() - h) / 2, w, h)
+
+    def _controls_visible(self) -> bool:
+        return (self.state in ACTIVE
+                and self.height_s.value >= BUTTON_MIN_H
+                and self.width_s.value >= 20)
+
+    def _button_rects(self):
+        """(accept, cancel) in widget coordinates, or (None, None)."""
+        if not self._controls_visible():
+            return None, None
+        r = self._capsule_rect()
+        return (QRectF(r.left(), r.top(), r.width(), BUTTON_H),
+                QRectF(r.left(), r.bottom() - BUTTON_H, r.width(), BUTTON_H))
+
+    def capsule_centre(self):
+        r = self._capsule_rect()
+        tl = self.mapToGlobal(self.rect().topLeft())
+        return QPointF(tl.x() + r.center().x(), tl.y() + r.center().y())
+
+    # --- mouse ------------------------------------------------------------
+
+    def mouseMoveEvent(self, event):
+        accept, cancel = self._button_rects()
+        pos = event.position()
+        hover = None
+        if accept and accept.contains(pos):
+            hover = "accept"
+        elif cancel and cancel.contains(pos):
+            hover = "cancel"
+        if hover != self._hover:
+            self._hover = hover
+            self.update()
+
+    def leaveEvent(self, _event):
+        if self._hover is not None:
+            self._hover = None
+            self.update()
+
+    def mouseReleaseEvent(self, event):
+        accept, cancel = self._button_rects()
+        pos = event.position()
+        if accept and accept.contains(pos):
+            self.accepted.emit()
+        elif cancel and cancel.contains(pos):
+            self.cancelled_by_user.emit()
 
     # --- state ------------------------------------------------------------
 
     def set_level(self, level: float) -> None:
-        """Called from the audio thread 60x/second. Deliberately a plain float
-        write rather than a queued signal — the paint timer reads it on the UI
-        thread and 60 queued events a second would be pure overhead."""
         self.level = level
 
     @Slot(str, str)
     def apply_state(self, state: str, mode: str) -> None:
-        """Queued entry point from worker threads. Qt requires an invokable
-        slot; calling set_state directly across threads corrupts painting."""
         self.set_state(state, mode or None)
 
     def _target_size(self) -> tuple[int, int]:
         if self.state == "armed":
             return IDLE_SIZE
+        if self.state == HANDOFF:
+            return (16, 16)
         if self.state == "recording":
             return TOGGLE_SIZE if self.mode == "toggle" else REC_SIZE
         if self.state in WORKING:
             return WORK_SIZE
-        if self.state == HANDOFF:
-            return LAUNCH_SIZE
         if self.state in TERMINAL:
             return DONE_SIZE
         return REC_SIZE
@@ -233,8 +271,6 @@ class Pill(QWidget):
         self.height_s.target = float(h)
 
     def set_state(self, state: str, mode: str | None = None) -> None:
-        # "idle" from the session layer means "no dictation running", which is
-        # the armed indicator rather than nothing at all.
         if state == "idle":
             state = "armed" if self.show_when_idle else "off"
         if mode:
@@ -243,6 +279,9 @@ class Pill(QWidget):
             self._retarget()
             return
         self.state = state
+
+        # Only clickable while recording, when the controls are on screen.
+        self._set_click_through(state not in ACTIVE)
 
         if state == "off":
             self.opacity.target = 0.0
@@ -257,7 +296,7 @@ class Pill(QWidget):
             self.show()
             self._harden()
         else:
-            self._place()          # the focused monitor may have changed
+            self._place()
 
         if not self._timer.isActive():
             self._timer.start(16)
@@ -273,27 +312,23 @@ class Pill(QWidget):
             self.opacity.target = 1.0
             self.check.target = 0.0
         elif state == HANDOFF:
-            # Contract and fade: the comet picks the motion up from here.
             self.check.snap_to(0.0)
             self.opacity.target = 0.0
         elif state in ("done", "copied"):
-            # Hold full opacity while the tick strokes itself on; _tick starts
-            # the return to armed once it has actually been drawn.
             self.check.snap_to(0.0)
             self.check.target = 1.0
             self.opacity.target = 1.0
-        else:                                   # cancelled / error
+        else:
             self.shake = 1.0
             self.opacity.target = 1.0
 
     # --- frame ------------------------------------------------------------
 
     def _settle_to_armed(self) -> None:
-        """After a terminal state, shrink back to the armed indicator rather
-        than vanishing — the user needs to know dictation is still available."""
         self.state = "armed" if self.show_when_idle else "off"
         self.check.target = 0.0
         self._hold_frames = 0
+        self._set_click_through(True)
         self._retarget()
         self.opacity.target = IDLE_OPACITY if self.show_when_idle else 0.0
 
@@ -338,16 +373,8 @@ class Pill(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
         p.setOpacity(max(0.0, min(1.0, self.opacity.value)))
 
-        w = max(3.0, self.width_s.value)
-        h = max(4.0, self.height_s.value)
-        radius = w / 2.0
-        # Shake horizontally; against the right edge that reads as a nudge.
-        dx = math.sin(self.shake * 40.0) * 5.0 * self.shake
-        rect = QRectF(
-            self.width() - w - self.offset_px + self.slide.value + dx,
-            (self.height() - h) / 2,
-            w, h,
-        )
+        rect = self._capsule_rect()
+        radius = rect.width() / 2.0
 
         path = QPainterPath()
         path.addRoundedRect(rect, radius, radius)
@@ -357,7 +384,6 @@ class Pill(QWidget):
         body.setColorAt(1.0, BODY_BOTTOM)
         p.fillPath(path, body)
 
-        # A sheen down the upper third: the highlight is what sells glass.
         sheen = QLinearGradient(rect.topLeft(), rect.bottomLeft())
         sheen.setColorAt(0.0, GLASS_SHEEN)
         sheen.setColorAt(0.35, QColor(255, 255, 255, 0))
@@ -367,23 +393,16 @@ class Pill(QWidget):
         p.setPen(QPen(HAIRLINE, 1))
         p.drawPath(path)
 
-        accent_now = ACCENT.get(self.state, ACCENT["recording"])
+        accent = ACCENT.get(self.state, ACCENT["recording"])
         if self.state in ACTIVE and rect.width() > 16:
-            self._draw_rim(p, path, accent_now)
+            self._draw_rim(p, path, accent)
 
-        # Nothing may be drawn outside the capsule.
         p.setClipPath(path)
 
-        accent = ACCENT.get(self.state, ACCENT["recording"])
-
-        # The capsule stays subtle when armed, but its dots should not: one
-        # painter opacity for both washed the indicator out to nothing. Raise it
-        # for the accent only, so "Murmur is running" is actually readable.
         if self.state == "armed":
-            p.setOpacity(min(1.0, self.opacity.value * 1.5))
-
-        if self.state in ("armed", "recording"):
-            self._draw_bars(p, rect, accent)
+            self._draw_bars(p, rect, accent, rect)
+        elif self.state == "recording":
+            self._draw_controls(p, rect, accent)
         elif self.state in WORKING:
             self._draw_orb(p, rect, accent)
         elif self.state in ("done", "copied"):
@@ -392,54 +411,61 @@ class Pill(QWidget):
             self._draw_slash(p, rect, accent)
         p.end()
 
-    def _draw_rim(self, p, path: QPainterPath, accent) -> None:
-        """Twin Tron snakes: two lines 180 degrees apart running the same way.
+    def _draw_controls(self, p, rect, accent) -> None:
+        """Waveform between a tick and a cross.
 
-        Qt's percentAtLength/pointAtPercent are arc-length based, so the heads
-        travel at a constant speed around the capsule rather than racing the
-        straights and crawling the ends — which is exactly the property Sotto
-        needed trimmedPath for.
+        The controls only appear once the capsule is tall enough to hold them,
+        so the morph out of the armed sliver does not flash cramped glyphs on
+        its way up.
         """
-        p.save()
-        p.setBrush(Qt.NoBrush)
-        for offset in (0.0, 0.5):
-            head = (self.rim + offset) % 1.0
-            for i in range(RIM_SAMPLES):
-                a = head - RIM_LENGTH * (i / RIM_SAMPLES)
-                b = head - RIM_LENGTH * ((i + 1) / RIM_SAMPLES)
-                p1 = path.pointAtPercent(a % 1.0)
-                p2 = path.pointAtPercent(b % 1.0)
-                # Bright at the head, erased at the tail: the snake writes
-                # itself forward while the tail rubs out behind it.
-                fade = 1.0 - i / RIM_SAMPLES
-                c = QColor(accent)
-                c.setAlphaF(min(1.0, 0.9 * fade * fade))
-                p.setPen(QPen(c, 1.6 + 1.0 * fade, Qt.SolidLine, Qt.RoundCap))
-                p.drawLine(p1, p2)
-        p.restore()
+        accept, cancel = self._button_rects()
+        if accept is None:
+            self._draw_bars(p, rect, accent, rect)
+            return
 
-    def _draw_bars(self, p, rect, accent) -> None:
-        """Horizontal bars stacked up the capsule, length driven by the mic.
+        wave = QRectF(rect.left(), accept.bottom(), rect.width(),
+                      cancel.top() - accept.bottom())
+        self._draw_bars(p, rect, accent, wave)
 
-        The same waveform model as before, rendered on its side. The armed
-        indicator is a miniature of it rather than a different graphic, which is
-        what lets the two states morph into one another.
+        for which, r in (("accept", accept), ("cancel", cancel)):
+            hot = self._hover == which
+            colour = CONTROL_HOT if hot else CONTROL
+            if hot:
+                bg = QColor(accent)
+                bg.setAlphaF(0.22)
+                p.setPen(Qt.NoPen)
+                p.setBrush(bg)
+                p.drawRoundedRect(r.adjusted(2, 2, -2, -2), 8, 8)
+            c = r.center()
+            p.setBrush(Qt.NoBrush)
+            p.setPen(QPen(colour, 1.9, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            if which == "accept":
+                p.drawPolyline([QPointF(c.x() - 4.5, c.y()),
+                                QPointF(c.x() - 1.2, c.y() + 3.4),
+                                QPointF(c.x() + 4.5, c.y() - 3.4)])
+            else:
+                p.drawLine(QPointF(c.x() - 3.6, c.y() - 3.6),
+                           QPointF(c.x() + 3.6, c.y() + 3.6))
+                p.drawLine(QPointF(c.x() + 3.6, c.y() - 3.6),
+                           QPointF(c.x() - 3.6, c.y() + 3.6))
+
+    def _draw_bars(self, p, rect, accent, area: QRectF) -> None:
+        """Horizontal bars packed tight, length driven by the microphone.
+
+        A small gap and many bars is what makes this read as one waveform
+        rather than a row of separate ticks.
         """
         values = self.bars.heights()
         n = len(values)
         scale = rect.width() / REC_SIZE[0]
-
-        # Fill the capsule rather than clustering in the middle. Gaps are
-        # derived from the available height, so the same code draws a tall
-        # recording pill and a tiny armed sliver at the right density.
-        inset = max(3.0, 9.0 * scale)
-        usable = max(4.0, rect.height() - inset * 2)
-        thickness = max(1.2, min(4.2 * scale, usable / (n * 2.1)))
-        gap = (usable - n * thickness) / max(n - 1, 1)
-        top = rect.top() + inset
+        inset = max(2.0, 4.0 * scale)
+        usable = max(4.0, area.height() - inset * 2)
+        gap = BAR_GAP * scale
+        thickness = max(1.0, (usable - gap * (n - 1)) / n)
+        top = area.top() + inset
 
         room = max(2.0, rect.width() - 8.0 * scale)
-        floor = max(1.5, 3.2 * scale)
+        floor = max(1.5, 3.0 * scale)
         cx = rect.center().x()
 
         p.setPen(Qt.NoPen)
@@ -447,21 +473,32 @@ class Pill(QWidget):
         for i, v in enumerate(values):
             length = floor + v * room
             y = top + i * (thickness + gap)
-            p.drawRoundedRect(
-                QRectF(cx - length / 2, y, length, thickness),
-                thickness / 2, thickness / 2)
+            p.drawRoundedRect(QRectF(cx - length / 2, y, length, thickness),
+                              thickness / 2, thickness / 2)
+
+    def _draw_rim(self, p, path: QPainterPath, accent) -> None:
+        """Twin Tron snakes: two lines 180 degrees apart running the same way.
+        Qt's pointAtPercent is arc-length based, so the heads travel at constant
+        speed rather than racing the straights."""
+        p.save()
+        p.setBrush(Qt.NoBrush)
+        for offset in (0.0, 0.5):
+            head = (self.rim + offset) % 1.0
+            for i in range(RIM_SAMPLES):
+                a = head - RIM_LENGTH * (i / RIM_SAMPLES)
+                b = head - RIM_LENGTH * ((i + 1) / RIM_SAMPLES)
+                fade = 1.0 - i / RIM_SAMPLES
+                c = QColor(accent)
+                c.setAlphaF(min(1.0, 0.9 * fade * fade))
+                p.setPen(QPen(c, 1.6 + 1.0 * fade, Qt.SolidLine, Qt.RoundCap))
+                p.drawLine(path.pointAtPercent(a % 1.0),
+                           path.pointAtPercent(b % 1.0))
+        p.restore()
 
     def _draw_orb(self, p, rect, accent) -> None:
-        """The charge: a glowing orb that breathes while the model works.
-
-        It is deliberately not a smaller waveform. The shape has to be one you
-        cannot mistake for 'still listening' — that is what tells you the
-        recording has stopped and the machine has taken over.
-        """
-        from PySide6.QtGui import QRadialGradient
-
-        # Triangle wave rather than a sine: the swell is meant to feel like
-        # something charging, which wants a firmer top than a sine gives.
+        """The charge: a glowing orb that breathes while the model works. Not a
+        smaller waveform — the shape has to be one you cannot mistake for
+        'still listening'."""
         phase = abs(self.orb * 2.0 - 1.0)
         breathe = 0.72 + 0.28 * phase
         r = min(rect.width(), rect.height()) * 0.30 * breathe
@@ -475,15 +512,12 @@ class Pill(QWidget):
             p.drawEllipse(c, r * mult, r * mult)
 
         grad = QRadialGradient(QPointF(c.x() - r * 0.25, c.y() - r * 0.32), r * 1.7)
-        hot = QColor(accent).lighter(140)
-        cool = QColor(accent).darker(150)
-        grad.setColorAt(0.0, hot)
-        grad.setColorAt(1.0, cool)
+        grad.setColorAt(0.0, QColor(accent).lighter(140))
+        grad.setColorAt(1.0, QColor(accent).darker(150))
         p.setBrush(grad)
         p.drawEllipse(c, r, r)
 
     def _draw_check(self, p, rect, accent) -> None:
-        """Strokes itself on: the tick is drawn to a fraction of its length."""
         t = max(0.0, min(1.0, self.check.value))
         if t <= 0.01 or rect.width() < 12:
             return
@@ -503,7 +537,6 @@ class Pill(QWidget):
                                   b.y() + (d.y() - b.y()) * k))
 
     def _draw_slash(self, p, rect, accent) -> None:
-        """Cancelled or failed. A short bar, unmistakably not a tick."""
         c = rect.center()
         p.setPen(QPen(accent, 2.6, Qt.SolidLine, Qt.RoundCap))
         p.drawLine(QPointF(c.x() - 5, c.y()), QPointF(c.x() + 5, c.y()))

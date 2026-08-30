@@ -172,9 +172,95 @@ def test_the_size_change_is_animated_not_instant(pill):
 
 
 def test_the_pill_never_accepts_focus(pill):
+    """The controls mean the window now takes clicks, so it can no longer be
+    input-transparent. What must NOT change is that it never activates — an
+    activated overlay eats the paste the tick just asked for."""
     from PySide6.QtCore import Qt
 
     assert pill.focusPolicy() == Qt.NoFocus
     assert pill.testAttribute(Qt.WA_ShowWithoutActivating)
+
+
+def test_clicks_pass_through_unless_the_controls_are_showing(pill):
+    """An always-clickable overlay would swallow clicks on the window behind
+    it, and it sits over the edge of one."""
+    from PySide6.QtCore import Qt
+
+    pill.set_state("armed")
     assert pill.testAttribute(Qt.WA_TransparentForMouseEvents)
-    assert bool(pill.windowFlags() & Qt.WindowTransparentForInput)
+    pill.set_state("recording", "hold")
+    assert not pill.testAttribute(Qt.WA_TransparentForMouseEvents)
+    pill.set_state("done")
+    assert pill.testAttribute(Qt.WA_TransparentForMouseEvents)
+
+
+def test_the_controls_appear_only_once_the_capsule_can_hold_them(pill):
+    """Growing out of the sliver must not flash cramped glyphs on the way up."""
+    pill.set_state("armed")
+    settle(pill)
+    pill.set_state("recording", "hold")
+    pill._tick()
+    assert pill._button_rects() == (None, None), "controls drawn mid-morph"
+    settle(pill)
+    accept, cancel = pill._button_rects()
+    assert accept is not None and cancel is not None
+
+
+def test_the_tick_is_at_the_top_and_the_cross_at_the_bottom(pill):
+    pill.set_state("recording", "hold")
+    settle(pill)
+    accept, cancel = pill._button_rects()
+    assert accept.top() < cancel.top()
+    capsule = pill._capsule_rect()
+    assert accept.top() == capsule.top()
+    assert cancel.bottom() == capsule.bottom()
+    assert not accept.intersects(cancel)
+
+
+def test_clicking_the_tick_asks_to_stop_and_paste(pill):
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+
+    fired = []
+    pill.accepted.connect(lambda: fired.append("accept"))
+    pill.cancelled_by_user.connect(lambda: fired.append("cancel"))
+    pill.set_state("recording", "hold")
+    settle(pill)
+    accept, cancel = pill._button_rects()
+
+    for point, expected in ((accept.center(), "accept"), (cancel.center(), "cancel")):
+        pill.mouseReleaseEvent(QMouseEvent(
+            QEvent.MouseButtonRelease, QPointF(point), Qt.LeftButton,
+            Qt.LeftButton, Qt.NoModifier))
+    assert fired == ["accept", "cancel"]
+
+
+def test_clicking_the_waveform_between_them_does_nothing(pill):
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+
+    fired = []
+    pill.accepted.connect(lambda: fired.append("accept"))
+    pill.cancelled_by_user.connect(lambda: fired.append("cancel"))
+    pill.set_state("recording", "hold")
+    settle(pill)
+    pill.mouseReleaseEvent(QMouseEvent(
+        QEvent.MouseButtonRelease, QPointF(pill._capsule_rect().center()),
+        Qt.LeftButton, Qt.LeftButton, Qt.NoModifier))
+    assert fired == []
+
+
+def test_the_bars_are_packed_tight(pill):
+    """'Closer together, basically next to each other.' A visible gap between
+    every bar reads as separate ticks rather than one waveform."""
+    from murmur.ui.pill import BAR_GAP, BARS
+
+    assert BARS >= 14, "too few bars to read as a waveform"
+    assert BAR_GAP <= 2.0, "the bars are still spread apart"
+
+
+def test_the_pill_got_smaller(pill):
+    """It was 34x150 and read as chunky."""
+    assert REC_SIZE[0] <= 30
+    assert REC_SIZE[1] <= 140
+    assert IDLE_SIZE[0] <= 12
