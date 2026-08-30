@@ -846,3 +846,42 @@ so a wedged one cannot stop the app closing.
 
 **Verified as regressions:** 13 of the new tests fail against the stashed source.
 406 tests, 17/17 checks. Adversarial failures 72 → 66.
+
+## 2026-08-30 — remediation tier 2: no action the user did not ask for
+
+**6. The pill offered a target it had not drawn.** Hit-testing gated on the
+active state GROUP; the painter draws the controls only while recording. For the
+frames after a hands-free recording ended, while the capsule was still shrinking,
+the tick and cross were hittable and invisible — a click aimed at the editor was
+taken from the window underneath and reinterpreted as stop-and-paste. Both now
+gate on the same condition, and a test asserts they agree across every state
+rather than only the one that broke.
+
+**7. A cancel between the clipboard and the paste was overruled.** Cancellation
+was checked once before the copy and never again. The clipboard write stays first
+— a failed animation must never cost the user their words — but there is a free
+check point after it, and it is now taken. The text stays on the clipboard, so
+the user can still have it if they want it.
+
+**8. The comet's aim belongs to the session.** It was one slot written by every
+stop, so a dictation still transcribing when the next one ended flew to the newer
+session's cursor. Same ownership-travels-with-the-session pattern as the cancel
+flag and the pending list.
+
+**9. `paste()` re-checks the modifiers itself.** It assumed `copy()` had cleared
+them, but the two are deliberately split so an animation can run between — and
+the chord can be re-pressed inside that window, which turns the paste into
+Ctrl+Win+V and opens Clipboard History. Refusing costs nothing: the text is
+already on the clipboard.
+
+**10. The modifier wait samples before it waits.** The check lived only inside a
+timed loop whose condition is evaluated first, so a zero timeout — or any stall
+longer than the timeout before the loop was entered — reported "still held"
+having polled nothing at all. It wanted do-while semantics.
+
+Also added `tests/conftest.py`. The `app`, `pill` and `qapp` fixtures were defined
+per module, so a new test file could not reach them. Modules defining their own
+still win, so nothing existing changed.
+
+**Verified as regressions:** 9 of the 16 new tests fail against the stashed source.
+422 tests, 17/17 checks.

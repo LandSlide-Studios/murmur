@@ -207,7 +207,13 @@ class Pill(QWidget):
         # keys that stop it — a button he would have to let go of the chord to
         # reach is worse than the chord. Hands-free is the mode where there is
         # nothing held and therefore something to press.
-        return (self.state in ACTIVE
+        # `state == "recording"`, NOT `state in ACTIVE`. The painter draws the
+        # tick and cross only while recording; hit-testing accepted the whole
+        # active group. For the ~6 frames after a hands-free recording ends,
+        # while the capsule is still shrinking, they were hittable and undrawn:
+        # a click aimed at the editor was taken from the window underneath and
+        # reinterpreted as stop-and-paste.
+        return (self.state == "recording"
                 and self.mode == "toggle"
                 and self.height_s.value >= BUTTON_MIN_H
                 and self.width_s.value >= 20)

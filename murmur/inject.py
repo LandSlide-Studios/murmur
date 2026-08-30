@@ -88,6 +88,14 @@ class Injector:
             if user32.GetAsyncKeyState(vk) & _HELD:
                 user32.keybd_event(vk, 0, KEYEVENTF_KEYUP, 0)
 
+        # Sample once BEFORE the wait. The check used to live only inside a
+        # timed loop whose condition is evaluated first, so a zero timeout --
+        # or any stall longer than the timeout before the loop was entered --
+        # reported "still held" having polled nothing at all, and refused to
+        # paste when nothing was actually down. This wants do-while semantics.
+        if not any(user32.GetAsyncKeyState(vk) & _HELD for vk in MODIFIERS):
+            return True
+
         deadline = time.perf_counter() + self.release_timeout_s
         while time.perf_counter() < deadline:
             if not any(user32.GetAsyncKeyState(vk) & _HELD for vk in MODIFIERS):
@@ -121,10 +129,22 @@ class Injector:
             self._set_clipboard(text)
             return released
 
-    def paste(self) -> None:
-        """Send Ctrl+V. Assumes copy() already cleared the modifiers."""
+    def paste(self) -> bool:
+        """Send Ctrl+V. Returns False if a modifier was still held.
+
+        It used to assume copy() had already cleared them. The split exists so
+        an animation can run in between, and the user can re-press the chord
+        inside that window -- which turns the paste into Ctrl+Win+V and opens
+        Clipboard History instead of pasting. The text is already on the
+        clipboard, so refusing costs nothing.
+        """
         with self._lock:
+            if not self._release_modifiers():
+                log.warning("modifiers held at paste time; leaving the text "
+                            "on the clipboard")
+                return False
             self._send_paste()
+            return True
 
     def inject(self, text: str | None) -> bool:
         """Copy and paste in one go. Returns True if the text was pasted,

@@ -50,12 +50,17 @@ class Session:
     to travel with the session.
     """
 
-    __slots__ = ("id", "mode", "cancelled")
+    __slots__ = ("id", "mode", "cancelled", "aim")
 
     def __init__(self, session_id: int, mode: str):
         self.id = session_id
         self.mode = mode
         self.cancelled = False
+        # Where the cursor was when THIS session stopped. It used to be one
+        # slot on the app, written by every stop, so a dictation still
+        # transcribing when the next one ended flew to the newer session's
+        # cursor -- contradicting the whole point of a ballistic aim.
+        self.aim: tuple[int, int] | None = None
 
 
 class MurmurApp:
@@ -121,6 +126,8 @@ class MurmurApp:
         self._inflight: Session | None = None
         self._seq = 0
         self._last_level_t: float | None = None
+        # Kept only so a session started before this field existed still has
+        # somewhere to read from; the live value belongs to the Session.
         self._aim: tuple[int, int] | None = None
         self._handlers = {
             Act.START_HOLD: lambda: self._start("hold"),
@@ -298,7 +305,7 @@ class MurmurApp:
             pcm = self.recorder.end()
         # Where the mouse is NOW. The comet is ballistic: it flies to where you
         # were when you stopped talking, not to wherever the cursor drifts to.
-        self._aim = self._cursor_point()
+        session.aim = self._aim = self._cursor_point()
         dur_ms = int(len(pcm) / self.cfg.get("audio.sample_rate") * 1000)
         self.on_state("transcribing")
         self._cue("charge")
@@ -460,11 +467,23 @@ class MurmurApp:
                         # moves, so a failed animation can never cost the user
                         # their words.
                         released = self.injector.copy(final)
-                        self._cue("launch")
-                        if released:
+                        # The clipboard is not the document. Cancellation was
+                        # checked once before this and never again, so an Esc
+                        # landing in the window between the two was
+                        # acknowledged and then overruled by the paste. The
+                        # text stays on the clipboard either way, which is the
+                        # point: the user can still have it if they want it.
+                        if session.cancelled:
+                            log.info("cancelled after the clipboard; not pasting")
+                            status = "cancelled"
+                            self.on_state("cancelled")
+                        elif released:
+                            self._cue("launch")
                             self._receipt(mode, final, "pasted")
-                            self.on_state("flying", text=final, aim=self._aim)
+                            self.on_state("flying", text=final,
+                                          aim=session.aim or self._aim)
                         else:
+                            self._cue("launch")
                             self._receipt(mode, final, "clipboard only "
                                           "(a modifier was still held)")
                             self.on_state("copied", text=final)
