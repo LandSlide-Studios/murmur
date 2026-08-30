@@ -757,3 +757,48 @@ the colon.
 
 375 tests, 17/17 checks. Remaining findings are triaged in the reply to Tommy —
 several need a product decision rather than a fix.
+
+## 2026-08-30 — the two critical audit findings, fixed
+
+**Esc cancelled whichever session the worker happened to be holding.** The
+fallback when nothing was recording read `_inflight`, a single slot the worker
+overwrites per job. The audit measured it: 200/200 cancels lost once the worker
+had moved on, with an unrelated earlier session destroyed in its place. That is
+the same process-wide-flag shape that per-session cancel flags were introduced to
+remove — reintroduced in a new place.
+
+Replaced with `_pending`, an ordered list of sessions that have been queued and
+not yet delivered. Esc takes the most recent one, which is the session on screen.
+A session leaves `_pending` the moment its text reaches the clipboard, so Esc
+cannot retroactively mark a delivered dictation cancelled. `_inflight` stays, but
+as diagnostics only and labelled as such — the audit's own tests use it to watch
+the worker, and that is a legitimate thing to expose.
+
+**Nothing told the chord FSM when a session ended by any route but the chord.**
+`adopt_toggle_session()` existed for the way in and had no counterpart. After a
+silence auto-stop the FSM still believed it was recording, so every later Esc
+emitted a genuine cancel into an app with nothing recording — which is what made
+the fallback above reachable from the keyboard during an ordinary hands-free
+dictation. Added `release_session()`, called from every path that ends a session,
+idempotent so the chord path can call it too.
+
+Also, one line in the same function: the cancel was announced unconditionally, so
+the app confirmed a cancel it had not performed for text already in the document.
+
+**Verified as regressions:** all five new tests fail against the stashed source
+and pass against the fix.
+
+**One false positive, triaged with evidence.** The audit's `test_33` asserted that
+no session may be delivered once a cancel is acknowledged. With the fix, pytest's
+locals show `{'bravo': 'cancelled', 'alpha': 'ok'}` — Esc reached the session it
+was meant for and left the other alone, which is correct. That assertion conflated
+"the cancelled session" with "any session"; it was invisible when written because
+the code cancelled the wrong one and both symptoms appeared together. Rewritten to
+the real invariant, with the reasoning kept in the file.
+
+**One self-inflicted regression on the way.** Removing `_inflight` outright broke
+28 of the audit's scenarios, which use it to watch the worker — the adversarial
+count went 76 → 104 before I looked. Restoring it as diagnostics fixed all 28.
+
+Adversarial scenarios failing: 94 at the audit, 76 after the first fix pass, **72
+now**. 381 unit tests, 17/17 system checks.

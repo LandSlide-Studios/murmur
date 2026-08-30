@@ -105,6 +105,19 @@ class MurmurApp:
         self._session_lock = threading.RLock()
         self._jobs: queue.Queue = queue.Queue()
         self._session: Session | None = None
+        # Sessions that have been queued and can still be cancelled, oldest
+        # first. This replaces a single `_inflight` slot that the worker
+        # overwrote for whichever job it happened to be holding -- so which
+        # session Esc hit was decided by worker timing, and it could destroy
+        # one the user never cancelled while delivering one they did.
+        self._pending: list[Session] = []
+        self._pending_lock = threading.Lock()
+        # DIAGNOSTIC ONLY -- what the worker is holding right now. Never
+        # cancel through this. It used to be the cancel fallback, and
+        # because the worker overwrites it per job, which session Esc hit
+        # was decided by worker timing: cancels lost once it moved on, and
+        # an older session destroyed in its place. Cancellation reads
+        # `_pending` above, which is ordered and owned by the session.
         self._inflight: Session | None = None
         self._seq = 0
         self._last_level_t: float | None = None
@@ -285,6 +298,12 @@ class MurmurApp:
         dur_ms = int(len(pcm) / self.cfg.get("audio.sample_rate") * 1000)
         self.on_state("transcribing")
         self._cue("charge")
+        with self._pending_lock:
+            self._pending.append(session)
+        # Something other than the chord may have ended this (the silence
+        # auto-stop runs on the audio thread, the tick lives on the pill), and
+        # the FSM would otherwise still believe a session is recording.
+        self._release_fsm()
         self._jobs.put((pcm, session, dur_ms))
 
     def _discard(self) -> None:
@@ -305,7 +324,14 @@ class MurmurApp:
                 pcm = self.recorder.end()
             else:
                 # Nothing recording, but a transcription may still be in flight.
-                session, pcm = self._inflight, None
+                # Take the most recent session that has not been delivered yet.
+                # Reading the worker's current job instead meant Esc cancelled
+                # whatever it happened to be holding: 200/200 cancels lost once
+                # the worker had moved on, and an older session destroyed in its
+                # place.
+                pcm = None
+                with self._pending_lock:
+                    session = self._pending[-1] if self._pending else None
                 if session is not None:
                     session.cancelled = True
         if session is not None and pcm is not None:
@@ -314,9 +340,30 @@ class MurmurApp:
             # design, but "every session is recorded" is the whole promise of
             # the history panel — silently leaving no trace breaks it.
             self._record_cancelled(session.mode, dur_ms)
-        if session is not None:
-            self._cue("cancel")
+        self._release_fsm()
+        if session is None:
+            # Nothing was cancelled, so say nothing. This used to fire
+            # unconditionally, confirming a cancel for text already sitting in
+            # the user's document.
+            return
+        self._cue("cancel")
         self.on_state("cancelled")
+
+    def _unpend(self, session: "Session") -> None:
+        """Drop a session from the cancellable set. Safe to call twice."""
+        with self._pending_lock:
+            if session in self._pending:
+                self._pending.remove(session)
+
+    def _release_fsm(self) -> None:
+        """Tell the chord FSM the live session is over.
+
+        Needed because sessions end by routes the FSM cannot see: the silence
+        auto-stop on the audio thread, and the tick and cross on the pill.
+        """
+        fsm = getattr(getattr(self, "hotkeys", None), "fsm", None)
+        if fsm is not None:
+            fsm.release_session()
 
     def _record_cancelled(self, mode: str, dur_ms: int) -> None:
         try:
@@ -336,7 +383,7 @@ class MurmurApp:
             if job is None:
                 return
             pcm, session, dur_ms = job
-            self._inflight = session
+            self._inflight = session          # diagnostic; see __init__
             try:
                 self._process(pcm, session, dur_ms)
             except Exception:
@@ -346,6 +393,7 @@ class MurmurApp:
                 self.on_state("error")
             finally:
                 self._inflight = None
+                self._unpend(session)
 
     def _process(self, pcm, session: "Session", dur_ms: int) -> None:
         """Every path through here writes a history row. A crashed or cancelled
@@ -391,6 +439,10 @@ class MurmurApp:
                     polished = self.polisher.polish(
                         raw, glossary=self.vocab.glossary())
                     final = self.vocab.apply(polished)
+                    # Past this point the text reaches the clipboard, so Esc
+                    # can no longer take it back -- and must not mark a
+                    # delivered session cancelled in the history.
+                    self._unpend(session)
                     if session.cancelled:
                         status = "cancelled"
                     elif not self.cfg.get("ui.comet", True):

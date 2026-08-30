@@ -96,6 +96,27 @@ class ChordFSM:
         self.armed_for_stop = False
         self._blocked_until_release = False
 
+    def release_session(self) -> None:
+        """Mark the live session over when something OTHER than a chord ended it.
+
+        The counterpart to `adopt_toggle_session`. There was one on the way in
+        and none on the way out, so a hands-free session ended by the silence
+        auto-stop -- or by the tick on the pill -- left the FSM believing it was
+        still recording. Every later Esc then emitted a real CANCEL into an app
+        with nothing recording, which is what made the cancel fallback in
+        `app.py` reachable from the keyboard during an ordinary session.
+
+        Emits nothing: the session has already been dealt with by the caller.
+        Idempotent, so the chord path (which has already ended it through
+        `_end`) can call it too without caring.
+        """
+        if self.state not in (St.REC_HOLD, St.REC_TOGGLE):
+            return
+        self.state = St.IDLE
+        self.armed_for_stop = False
+        if self._chord_down():
+            self._blocked_until_release = True
+
     def _end(self, act: Act) -> list[Act]:
         self.state = St.IDLE
         self.armed_for_stop = False

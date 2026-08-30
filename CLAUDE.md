@@ -76,6 +76,14 @@ Rebuild of Wispr Flow's behaviour on a local-only stack. Tommy's own tool, not c
 - **Screenshots must be rendered at real microphone levels.** `probe_pill.py` drove
   0.30 where his voice is 0.008. Every meter review was done against a saturated
   picture, which is why it passed inspection and failed in his hand.
+- **Never cancel through a slot the worker owns.** `_inflight` is diagnostics
+  only. Cancellation reads `_pending`, which is ordered and owned by the
+  session — a worker-owned slot made Esc hit whichever job happened to be in
+  flight, losing the cancel and destroying an unrelated session in its place.
+- **Every route that ends a session must tell the chord FSM.** `adopt_toggle_session`
+  had no counterpart, so the silence auto-stop and the pill's buttons left the
+  FSM believing it was still recording, and every later Esc fired a real cancel
+  into an app with nothing recording.
 - **Never claim GPU acceleration, or any verification, without an observed run.**
 
 ## Locked decisions
@@ -109,7 +117,7 @@ Dated. Do not re-litigate without a reason that is new.
 
 ## State
 
-**Complete and in daily use.** 342 unit tests, 2 live tests, 17/17 system checks
+**Complete and in daily use.** 381 unit tests, 2 live tests, 17/17 system checks
 via `scripts/verify.py`. Desktop shortcut, tray and launch-at-login in place.
 
 Two adversarial review passes have run against this code; their findings are fixed

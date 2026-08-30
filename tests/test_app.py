@@ -116,7 +116,6 @@ def test_cancelling_reaches_a_session_already_transcribing(app):
     app._start("hold")
     session = app._session
     app._stop_and_transcribe()
-    app._inflight = session
     app._cancel_session()
     assert session.cancelled is True
 
@@ -287,3 +286,93 @@ def test_the_guard_still_rejects_a_recording_of_an_empty_room(app, monkeypatch):
 
     rows = app.history.recent()
     assert len(rows) == 1 and rows[0]["status"] == "empty"
+
+
+# --- the two critical findings from the adversarial audit --------------------
+
+def test_esc_cancels_the_session_the_user_was_looking_at(app):
+    """Cancel used to fall back to whichever job the worker happened to be
+    holding, so which session Esc hit was decided by worker timing: 200/200
+    cancels lost once the worker had moved on, and an older session destroyed
+    in its place."""
+    app._start("hold")
+    first = app._session
+    app._stop_and_transcribe()
+    app._start("hold")
+    second = app._session
+    app._stop_and_transcribe()
+
+    app._cancel_session()
+
+    assert second.cancelled is True, "the session on screen was not cancelled"
+    assert first.cancelled is False, "cancelled a session the user never touched"
+
+
+def test_esc_with_nothing_pending_cancels_nothing_and_says_nothing(app):
+    """It announced a cancel unconditionally — confirming one for text already
+    sitting in the user's document."""
+    said = []
+    app.on_state = lambda state, **kw: said.append(state)
+    app._cancel_session()
+    assert "cancelled" not in said
+
+
+def test_a_delivered_session_is_not_cancelled_by_a_later_esc(app, monkeypatch):
+    """Once the text is on the clipboard, Esc cannot take it back — and must not
+    write a 'cancelled' row for a dictation that was delivered."""
+    import numpy as np
+
+    class FakeStt:
+        def transcribe(self, pcm, hotwords):
+            return "already in the document"
+
+    monkeypatch.setattr(app, "_stt", FakeStt())
+    monkeypatch.setattr(app.polisher, "enabled", False)
+    monkeypatch.setattr(app.injector, "copy", lambda t: True)
+
+    session = A.Session(41, "hold")
+    with app._pending_lock:
+        app._pending.append(session)
+    app._process(np.full(16000, 0.3, dtype=np.float32), session, 1000)
+
+    app._cancel_session()
+
+    assert session.cancelled is False
+    rows = app.history.recent()
+    assert len(rows) == 1 and rows[0]["status"] == "ok"
+
+
+def test_the_chord_fsm_is_told_when_the_audio_thread_stops_a_session(app):
+    """There was an adopt on the way in and nothing on the way out, so a
+    hands-free session ended by the silence auto-stop left the FSM believing it
+    was still recording. Every later Esc then emitted a real cancel into an app
+    with nothing recording — which is what made the fallback above reachable."""
+    from murmur.platform.win.chord import St
+
+    app._start("toggle", external=True)
+    assert app.hotkeys.fsm.state is St.REC_TOGGLE
+    app._stop_and_transcribe()
+    assert app.hotkeys.fsm.state is St.IDLE, "the FSM still thinks it is recording"
+
+
+def test_esc_after_an_auto_stop_does_not_emit_a_stray_cancel(app):
+    """The two findings joined up: this is the end-to-end path."""
+    from murmur.platform.win.chord import Act, Ev
+
+    app._start("toggle", external=True)
+    app._stop_and_transcribe()
+    acts = app.hotkeys.fsm.feed(Ev("down", "esc", 9000))
+    assert Act.CANCEL not in acts
+
+
+def test_release_session_is_idempotent_and_safe_on_the_chord_path(app):
+    """The chord path has already ended the session through _end, so the release
+    must be a no-op there rather than disturbing the FSM."""
+    from murmur.platform.win.chord import St
+
+    app._start("hold")
+    app._stop_and_transcribe()
+    before = app.hotkeys.fsm.state
+    app._release_fsm()
+    app._release_fsm()
+    assert app.hotkeys.fsm.state is before is St.IDLE

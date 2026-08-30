@@ -902,8 +902,18 @@ def test_33_cancel_with_a_backlog_hits_the_wrong_session(make_app):
     delivered = app.injector.delivered()
     by_text = {r["raw_text"]: r["status"] for r in rows(app)}
     problems = []
-    if delivered:
-        problems.append(f"I2: Esc was acknowledged and text landed anyway: {delivered}")
+
+    # I2 as originally written was `if delivered: ...` — no session may be
+    # delivered once a cancel is acknowledged. That conflated "the session the
+    # user cancelled" with "any session", which was invisible at the time
+    # because the code cancelled the wrong one and both symptoms co-occurred.
+    #
+    # Esc here is meant for B. A was never cancelled, so A SHOULD be delivered.
+    # The real invariant is that the cancelled session's text does not land.
+    if "bravo" in delivered:
+        problems.append(f"I2: the cancelled session was delivered anyway: {delivered}")
+    if by_text.get("bravo") != "cancelled":
+        problems.append(f"I2: Esc did not reach the session it was meant for: {by_text}")
     if by_text.get("alpha") == "cancelled":
         problems.append("I3: the cancel destroyed session A, which predates the Esc")
     assert not problems, "; ".join(problems)
