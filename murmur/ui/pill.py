@@ -335,6 +335,13 @@ class Pill(QWidget):
 
         if state == "off":
             self.opacity.target = 0.0
+            # Restart the clock BEFORE returning. Once the timer stops itself at
+            # rest, this is the only path that changes state without starting it
+            # again -- so the fade never ran and a translucent always-on-top
+            # capsule stayed on the bezel permanently. Pausing the hotkeys from
+            # the tray hits exactly this.
+            if not self._timer.isActive():
+                self._timer.start(16)
             return
 
         # Unconditionally: this used to sit inside the not-yet-visible branch,
@@ -438,6 +445,12 @@ class Pill(QWidget):
             self._timer.stop()
             self.hide()
         elif self._at_rest():
+            # Nothing will step the bars again until a new session, so the
+            # adaptive gain would freeze at whatever the last dictation left --
+            # a cough pinned it and the next session's first word read low. The
+            # decay exists for exactly this gap; with no clock to run it on,
+            # forget outright.
+            self.bars.forget_gain()
             # Nothing left to animate. The armed pill draws only its capsule —
             # no bars, no rim, no orb — but the timer kept stepping fifteen
             # springs and repainting a translucent always-on-top window sixty

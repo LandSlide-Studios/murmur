@@ -217,3 +217,45 @@ def test_a_locked_database_is_not_treated_as_damaged(tmp_path):
     finally:
         holder.rollback()
         holder.close()
+
+
+# --- the timer stop broke the two things that depended on the clock ---------
+
+def test_switching_the_pill_off_actually_hides_it(pill):
+    """Once the timer stops itself at rest, `off` was the one path that changed
+    state without starting it again — so the fade never ran and a translucent
+    always-on-top capsule stayed on the bezel permanently. Pausing the hotkeys
+    from the tray hits exactly this."""
+    pill.set_state("armed")
+    for _ in range(600):
+        pill._tick()
+        if not pill._timer.isActive():
+            break
+    assert not pill._timer.isActive(), "precondition: it should have settled"
+
+    pill.set_state("off")
+    assert pill._timer.isActive(), "nothing left running to finish the fade"
+    for _ in range(600):
+        pill._tick()
+        if not pill.isVisible():
+            break
+    assert pill.opacity.value < 0.01
+
+
+def test_the_gain_does_not_freeze_when_the_clock_stops(pill):
+    """The decay is reached only from the idle paths, and those run on the
+    timer the same change stops — so after a loud dictation the gain froze at
+    whatever that left, and the next session's first word read low. The decay
+    exists for exactly this gap."""
+    pill.set_state("recording", "hold")
+    for _ in range(120):
+        pill.set_level(0.20)
+        pill._tick()
+    assert pill.bars._peak > 0.1
+
+    pill.set_state("armed")
+    for _ in range(600):
+        pill._tick()
+        if not pill._timer.isActive():
+            break
+    assert pill.bars._peak < 0.03, f"gain frozen at {pill.bars._peak:.4f}"

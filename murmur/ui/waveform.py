@@ -137,6 +137,15 @@ class BarModel:
             s.step(dt)
             s.value = max(0.0, min(1.0, s.value))
 
+    def forget_gain(self) -> None:
+        """Drop the adaptive gain to its floor.
+
+        Called when the overlay settles and its timer stops: from that moment
+        nothing steps the model until the next session, so a decay measured in
+        frames has no clock to run on.
+        """
+        self._peak = _PEAK_MIN
+
     def _decay_peak(self, dt: float) -> None:
         """Let the adaptive gain forget, whatever the row is doing.
 
