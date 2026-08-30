@@ -44,6 +44,12 @@ def test_a_correction_does_not_clobber_an_ordinary_word(tmp_path):
 
 def test_a_short_term_does_not_rewrite_every_occurrence(tmp_path):
     v = vocab(tmp_path)
+    # Twice, because a case-only change to a common word no longer gets the
+    # instant trust a manual edit normally earns -- learning `us -> US` from a
+    # single edit rewrote the pronoun in every later transcript. The property
+    # under test here is unchanged: only the observed lowercase form is
+    # rewritten, and the already-correct "US" is left alone.
+    v.observe("us", "US", source="manual")
     v.observe("us", "US", source="manual")
     assert v.apply("US folks should call us") == "US folks should call US"
 

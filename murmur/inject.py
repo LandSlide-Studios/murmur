@@ -9,6 +9,7 @@ Every step below exists because of a specific observed failure. See CLAUDE.md.
 
 import ctypes
 import logging
+import threading
 import time
 
 log = logging.getLogger(__name__)
@@ -43,6 +44,18 @@ class Injector:
         self.clipboard_settle_s = clipboard_settle_s
         self.restore_delay_s = restore_delay_s
         self.release_timeout_s = release_timeout_s
+        # One injection at a time.
+        #
+        # There was no lock here at all, and copy()/paste() are deliberately
+        # split so an animation can run between them. A second dictation that
+        # set the clipboard inside the first one's settle window meant BOTH
+        # Ctrl+V presses pasted the second transcript -- two presses, one
+        # transcript delivered twice, the other lost.
+        #
+        # Re-entrant because inject() calls the same primitives. This is also
+        # the seam the modifier re-check and the clipboard guards belong
+        # inside, so they cannot race the thing they guard.
+        self._lock = threading.RLock()
 
     # --- clipboard -------------------------------------------------------
 
@@ -103,20 +116,25 @@ class Injector:
         """
         if not text:
             return False
-        released = self._release_modifiers()
-        self._set_clipboard(text)
-        return released
+        with self._lock:
+            released = self._release_modifiers()
+            self._set_clipboard(text)
+            return released
 
     def paste(self) -> None:
         """Send Ctrl+V. Assumes copy() already cleared the modifiers."""
-        self._send_paste()
+        with self._lock:
+            self._send_paste()
 
     def inject(self, text: str | None) -> bool:
         """Copy and paste in one go. Returns True if the text was pasted,
         False if it was only copied."""
         if not text:
             return False
+        with self._lock:
+            return self._inject_locked(text)
 
+    def _inject_locked(self, text: str) -> bool:
         previous = None
         if self.restore_previous:
             try:

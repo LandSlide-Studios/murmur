@@ -376,3 +376,42 @@ def test_release_session_is_idempotent_and_safe_on_the_chord_path(app):
     app._release_fsm()
     app._release_fsm()
     assert app.hotkeys.fsm.state is before is St.IDLE
+
+
+def test_quitting_waits_for_a_dictation_already_in_flight(app, monkeypatch):
+    """The shutdown sentinel goes in behind any queued jobs, and the stores used
+    to close immediately after posting it. Those jobs then ran against closed
+    databases: not delivered, and no history row either — the one outcome
+    _process's docstring rules out."""
+    import numpy as np
+
+    class SlowStt:
+        def transcribe(self, pcm, hotwords):
+            time.sleep(0.15)
+            return "the last thing he said"
+
+    monkeypatch.setattr(app, "_stt", SlowStt())
+    monkeypatch.setattr(app.polisher, "enabled", False)
+    monkeypatch.setattr(app.injector, "copy", lambda t: True)
+    monkeypatch.setattr(app.hotkeys, "stop", lambda: None)
+    monkeypatch.setattr(app.recorder, "close", lambda: None)
+
+    # Spy on the write rather than reading the store afterwards: stop() closes
+    # it, which is the whole point of the ordering being wrong.
+    written = []
+    real_add = app.history.add
+
+    def spy(**kw):
+        written.append(kw)
+        return real_add(**kw)
+
+    monkeypatch.setattr(app.history, "add", spy)
+
+    app._worker = threading.Thread(target=app._run_worker, daemon=True)
+    app._worker.start()
+    app._jobs.put((np.full(16000, 0.3, dtype=np.float32), A.Session(77, "hold"), 1000))
+
+    app.stop()
+
+    assert len(written) == 1, "the queued dictation left no trace"
+    assert written[0]["final"] == "the last thing he said"

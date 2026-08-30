@@ -802,3 +802,47 @@ count went 76 → 104 before I looked. Restoring it as diagnostics fixed all 28.
 
 Adversarial scenarios failing: 94 at the audit, 76 after the first fix pass, **72
 now**. 381 unit tests, 17/17 system checks.
+
+## 2026-08-30 — remediation tier 1: nothing rewrites, duplicates or drops the text
+
+Plan and sequencing in `REMEDIATION.md`. Tiers are ordered by what a defect costs
+the user, but also so each lays a seam the next one uses — tier 1's injector lock
+is where tier 2's modifier guards and tier 6's clipboard guards belong.
+
+**1. `apply()` is idempotent.** `Labs -> Labs Inc` turned "welcome to Labs Inc"
+into "Labs Inc Inc". The single-pass rewrite stopped runaway growth *within* a
+call and did nothing when the input already held the wrong form as a whole word —
+which is exactly what corrected output looks like. The guard has to anchor at
+every offset where the wrong form occurs inside the right one, because
+`Inc -> Labs Inc` matches at the END of an already-correct "Labs Inc".
+
+**2. A case-only fix on a common word needs a second sighting.** `us -> US` from
+one manual edit rewrote the pronoun everywhere. Not refused — US, IT and IN are
+real corrections — but demoted to the ordinary supervised path. Teaching it still
+works; it takes saying it twice. Proper nouns, names and technical terms are
+untouched and still trusted at once.
+
+**3. One observation counts once.** Three leaks into one counter: the read-back
+timer re-read for the whole 20s–120s window, a re-dictated phrase left two pending
+entries that scored one clipboard event twice, and matching ran against every
+pending paste rather than the closest — inventing `dan -> Dana` alongside the
+correct `dana -> Dana`. All three close by keying on *what was observed* rather
+than on a read count, and learning from the best match only.
+
+*The first version of that fix was wrong.* Two identical pastes tie on score, the
+first always wins, and it is the one already counted — so a genuine second
+sighting was silently dropped and a real correction never promoted. Caught by an
+existing test. The already-counted filter now runs BEFORE the best is chosen.
+
+**4. One injection at a time.** No lock existed, and copy/paste are split so an
+animation can run between them; a second dictation setting the clipboard inside
+the first one's settle window made both presses paste the second transcript.
+Re-entrant, and named as the seam later tiers hang their guards on.
+
+**5. Quitting drains before closing.** The sentinel went in behind queued jobs and
+the stores closed immediately after, so those jobs ran against closed databases —
+not delivered, and no history row either. Now joins the worker with a 15s ceiling
+so a wedged one cannot stop the app closing.
+
+**Verified as regressions:** 13 of the new tests fail against the stashed source.
+406 tests, 17/17 checks. Adversarial failures 72 → 66.

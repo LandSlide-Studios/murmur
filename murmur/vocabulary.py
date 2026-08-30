@@ -48,6 +48,51 @@ _LEFT = r"(?<![\w])"
 _RIGHT = r"(?![\w])"
 
 
+
+# Words where a case-only "correction" is far more likely to be a one-off than a
+# rule. Learning `us -> US` from a single edit rewrote the pronoun in every later
+# transcript, and because a manual edit is trusted at once there was no second
+# sighting to catch it.
+#
+# These are NOT refused -- US, IT and IN are all real corrections someone might
+# want. They are demoted to the ordinary supervised path, so they need the same
+# two sightings an automatic guess needs. Teaching Murmur `US` still works; it
+# just takes saying it twice, which is the whole design of this module.
+_CASE_ONLY_NEEDS_PROOF = frozenset("""
+a an the and or but not so as at by for from in into of off on out to up with
+i me my we us our you your he him his she her it its they them their this that
+these those is am are was were be been being do does did have has had can could
+may might must shall should will would if then than when where who whom whose
+why how all any both each few more most no nor now one only other own same some
+such too very just also even still back down over under again once here there
+""".split())
+
+
+def _is_case_only(wrong: str, right: str) -> bool:
+    return wrong != right and wrong.casefold() == right.casefold()
+
+
+def _already_correct(text: str, start: int, wrong: str, right: str) -> bool:
+    """Is this match already sitting inside its own corrected form?
+
+    `Labs -> Labs Inc` fires on the "Labs" inside an already-correct "Labs Inc"
+    and produces "Labs Inc Inc". The single-pass rewrite stops runaway growth
+    WITHIN one call, but does nothing when the input already contains the wrong
+    form as a whole word -- which is exactly what corrected output looks like,
+    so any transcript repeating a phrase the user had corrected got mangled.
+
+    The wrong form can sit anywhere inside the right form, not just at its
+    start: `Inc -> Labs Inc` matches the "Inc" at the END of "Labs Inc", so the
+    window has to be anchored at each offset where `wrong` occurs in `right`.
+    """
+    at = right.find(wrong)
+    while at >= 0:
+        lo = start - at
+        if lo >= 0 and text[lo:lo + len(right)] == right:
+            return True
+        at = right.find(wrong, at + 1)
+    return False
+
 class Vocabulary:
     def __init__(self, path, promote_after_hits: int = 2):
         self.path = Path(path)
@@ -75,8 +120,13 @@ class Vocabulary:
                 "SELECT hit_count, promoted FROM terms WHERE wrong_form=? AND term=?",
                 (wrong, right)).fetchone()
             hits = (row["hit_count"] if row else 0) + 1
-            promoted = 1 if (source == "manual"
-                             or hits >= self.promote_after_hits) else 0
+            # A case-only change to a common word does not get the instant trust
+            # a manual edit normally earns. `us -> US` from one edit rewrote the
+            # pronoun everywhere; demoting it to the supervised path means it
+            # still works, it just has to be seen twice.
+            trusted = source == "manual" and not (
+                _is_case_only(wrong, right) and wrong.casefold() in _CASE_ONLY_NEEDS_PROOF)
+            promoted = 1 if (trusted or hits >= self.promote_after_hits) else 0
             self._conn.execute(
                 "INSERT INTO terms (wrong_form, term, hit_count, promoted,"
                 " first_seen, last_seen) VALUES (?,?,?,?,?,?)"
@@ -142,11 +192,16 @@ class Vocabulary:
             replacements[wrong] = r["term"]
             alternatives.append(re.escape(wrong))
 
+        def substitute(m):
+            wrong = m.group(0)
+            right = replacements.get(wrong, wrong)
+            if right == wrong or _already_correct(text, m.start(), wrong, right):
+                return wrong
+            return right
+
         pattern = _LEFT + "(?:" + "|".join(alternatives) + ")" + _RIGHT
         try:
-            return re.sub(pattern,
-                          lambda m: replacements.get(m.group(0), m.group(0)),
-                          text)
+            return re.sub(pattern, substitute, text)
         except re.error:
             log.debug("bad vocabulary pattern; leaving text unchanged")
             return text

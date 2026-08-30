@@ -92,7 +92,15 @@ class Corrections:
         with self._lock:
             self._pending.append(
                 {"id": row_id, "text": injected, "t": time.time(), "snap": snap,
-                 "read": False})
+                 # Observations already counted for this entry. The `read`
+                 # flag that used to live here was written and never read
+                 # anywhere -- a dead flag whose name says the repeat
+                 # suppression was designed and never wired up.
+                 #
+                 # Keyed by the observed text rather than by a read count,
+                 # because the same edit seen twice is one correction, and the
+                 # read-back timer re-reads for the whole 20s..120s window.
+                 "counted": set()})
 
     def poll(self) -> int:
         """Called on a slow timer. Re-reads pending pastes, drops expired ones."""
@@ -106,7 +114,9 @@ class Corrections:
             if self.uia is not None and p["snap"] and age > READBACK_AFTER_S:
                 try:
                     current = self.uia.read(p["snap"])
-                    if current and current.strip() != p["text"].strip():
+                    if (current and current.strip() != p["text"].strip()
+                            and current.strip() not in p["counted"]):
+                        p["counted"].add(current.strip())
                         learned += self.learn_from_auto(p["text"], current)
                 except Exception:
                     log.debug("UIA read-back failed", exc_info=True)
@@ -138,9 +148,28 @@ class Corrections:
         if any(p["text"].strip() == clean for p in pending):
             return 0                       # our own paste, not the user's edit
 
-        learned = 0
+        # The BEST match, not every match. Learning from all of them meant two
+        # consecutive dictations sharing phrasing ("email dana about the roof"
+        # and "email dan about the roof") taught the correct `dana -> Dana`
+        # alongside an invented `dan -> Dana` from the same single event.
+        #
+        # It also meant a phrase re-dictated after a bad paste left two pending
+        # entries, so one clipboard event scored two hits and promoted itself
+        # past the two-sighting rule without the user ever confirming it.
+        # Entries that already counted this exact observation are excluded
+        # BEFORE the best is chosen, not after. Choosing first and rejecting
+        # afterwards silently dropped a genuine second sighting: two identical
+        # pastes tie on score, the first always wins, and it is the one already
+        # counted -- so a real correction offered twice never promoted.
+        best, best_ratio = None, 0.0
         for p in pending:
+            if clean in p["counted"]:
+                continue
             ratio = difflib.SequenceMatcher(None, p["text"], clip_text).ratio()
-            if MIN_SIMILARITY <= ratio < 1.0:
-                learned += self.learn_from_auto(p["text"], clip_text)
-        return learned
+            if MIN_SIMILARITY <= ratio < 1.0 and ratio > best_ratio:
+                best, best_ratio = p, ratio
+
+        if best is None:
+            return 0
+        best["counted"].add(clean)
+        return self.learn_from_auto(best["text"], clip_text)

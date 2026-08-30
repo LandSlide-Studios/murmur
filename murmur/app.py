@@ -130,6 +130,10 @@ class MurmurApp:
             Act.CANCEL: self._cancel_session,
         }
         self._worker: threading.Thread | None = None
+        # How long quitting waits for a dictation already in flight. Long enough
+        # for a transcription plus a cleanup pass; short enough that a wedged
+        # worker cannot stop the app closing.
+        self.shutdown_drain_s = 15.0
 
     # --- lazy STT: a model load is seconds, and must not delay app start ----
 
@@ -513,6 +517,19 @@ class MurmurApp:
             self._session = None
         self.recorder.close()
         self._jobs.put(None)
+        # Wait for the worker to finish what it already has.
+        #
+        # The sentinel goes in behind any queued jobs, and the stores used to
+        # close immediately after posting it. Those jobs then ran against closed
+        # databases: the dictation was not delivered AND no history row was
+        # written for it -- the one outcome this module's docstring rules out.
+        # One dictation lost per quit that happened to be in flight.
+        worker = getattr(self, "_worker", None)
+        if worker is not None and worker.is_alive():
+            worker.join(timeout=self.shutdown_drain_s)
+            if worker.is_alive():
+                log.warning("worker still busy after %.1fs; closing anyway",
+                            self.shutdown_drain_s)
         try:
             self.history.close()
             self.vocab.close()
