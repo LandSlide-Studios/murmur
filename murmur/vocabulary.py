@@ -28,6 +28,19 @@ log = logging.getLogger(__name__)
 
 GLOSSARY_LIMIT = 40
 
+# Whisper conditions on a prompt of roughly 224 tokens. Beyond that the decoder
+# silently truncates, so an unbounded list does not just fail to help -- it
+# costs accuracy at the earliest point in the pipeline, where nothing
+# downstream can recover it. The learned set grows monotonically, so "unbounded"
+# is what it becomes.
+HOTWORD_LIMIT = 64
+
+# A term is user-derived text spliced into two different prompts. `polish.py`
+# already treated its copy as untrusted and sanitised it; the transcriber joined
+# the same list raw. Sanitising at the source is what stops the two diverging
+# again.
+_TERM_MAX_CHARS = 60
+
 # The key is the PAIR. Keying on the term alone counted sightings of the right
 # form, so two DIFFERENT mishearings ("teh" and "hte" both -> "the") promoted a
 # wrong form that had only ever been seen once.
@@ -151,16 +164,35 @@ class Vocabulary:
                 "SELECT * FROM terms WHERE promoted=1 AND enabled=1"
                 " ORDER BY LENGTH(wrong_form) DESC, hit_count DESC"))
 
-    def hotwords(self) -> list[str]:
+    @staticmethod
+    def _clean_term(term: str) -> str:
+        """Collapse whitespace, drop control characters, bound the length.
+
+        Newlines matter most: a term carrying one can open a new line inside a
+        prompt and stop looking like a term at all.
+        """
+        cleaned = "".join(
+            " " if c in "\r\n\t" else c
+            for c in (term or "")
+            if c == " " or not (ord(c) < 32 or ord(c) == 127))
+        return " ".join(cleaned.split())[:_TERM_MAX_CHARS]
+
+    def hotwords(self, limit: int = HOTWORD_LIMIT) -> list[str]:
+        """Sanitised, de-duplicated, and capped. Highest hit count first, so a
+        cap drops the terms the user has confirmed least."""
         seen, out = set(), []
         for r in self._active():
-            if r["term"] not in seen:
-                seen.add(r["term"])
-                out.append(r["term"])
+            term = self._clean_term(r["term"])
+            if not term or term in seen:
+                continue
+            seen.add(term)
+            out.append(term)
+            if limit is not None and len(out) >= limit:
+                break
         return out
 
     def glossary(self) -> list[str]:
-        return self.hotwords()[:GLOSSARY_LIMIT]
+        return self.hotwords(limit=GLOSSARY_LIMIT)
 
     def apply(self, text: str) -> str:
         """Substitute learned terms in ONE pass.

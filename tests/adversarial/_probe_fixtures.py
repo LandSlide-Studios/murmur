@@ -1,0 +1,13 @@
+def test_probe_paths(app):
+    print("history path:", getattr(app.history, "path", "<none>"))
+    print("vocab path:", app.vocab.path)
+    print("recorder:", vars(app.recorder).keys())
+    print("stt backend cfg:", app.cfg.get("stt.backend"))
+    print("ui.comet:", app.cfg.get("ui.comet", True))
+    print("learning.enabled:", app.cfg.get("learning.enabled"))
+    print("learning.uia_readback:", app.cfg.get("learning.uia_readback"))
+    print("promote_after_hits:", app.vocab.promote_after_hits)
+    print("sample_rate:", app.cfg.get("audio.sample_rate"))
+    print("speech_rms_threshold:", app.cfg.get("audio.speech_rms_threshold"))
+    print("corrections.uia:", app.corrections.uia)
+    print("polisher enabled:", getattr(app.polisher, "enabled", "?"))

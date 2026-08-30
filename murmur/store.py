@@ -54,8 +54,15 @@ def _quarantine(path: Path, error: Exception) -> Path | None:
     if not path.exists():
         return None
     # A stamped name rather than one fixed suffix, so a second bad start does
-    # not overwrite the first casualty.
-    aside = path.with_name(f"{path.name}.corrupt-{int(time.time())}")
+    # not overwrite the first casualty — and a counter after that, because two
+    # bad starts inside the same second would otherwise collide and `replace`
+    # would silently destroy the file we are trying to preserve.
+    stamp = int(time.time())
+    aside = path.with_name(f"{path.name}.corrupt-{stamp}")
+    n = 1
+    while aside.exists():
+        aside = path.with_name(f"{path.name}.corrupt-{stamp}-{n}")
+        n += 1
     try:
         path.replace(aside)
     except OSError:

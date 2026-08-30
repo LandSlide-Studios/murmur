@@ -134,3 +134,16 @@ def test_history_survives_the_quarantine_and_still_records(tmp_path):
           duration_ms=100, app="x", title="y", status="ok")
     assert len(h.recent()) == 1
     h.close()
+
+
+def test_two_bad_starts_in_the_same_second_keep_both_casualties(tmp_path):
+    """The quarantine name is stamped to the second. Two bad starts inside one
+    second would collide, and `replace` destroys the destination — losing the
+    very file the quarantine exists to preserve."""
+    path = tmp_path / "s.db"
+    for marker in (b"FIRST casualty", b"SECOND casualty"):
+        path.write_bytes(marker + b" junk" * 200)
+        History(path).close()
+
+    kept = sorted(p.read_bytes()[:14] for p in tmp_path.glob("s.db.corrupt-*"))
+    assert kept == [b"FIRST casualty", b"SECOND casualt"[:14]], kept

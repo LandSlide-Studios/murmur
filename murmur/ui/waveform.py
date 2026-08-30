@@ -137,7 +137,28 @@ class BarModel:
             s.step(dt)
             s.value = max(0.0, min(1.0, s.value))
 
+    def _decay_peak(self, dt: float) -> None:
+        """Let the adaptive gain forget, whatever the row is doing.
+
+        The decay lived only in `step()`, which runs while the user is TALKING
+        -- so the gain only forgot during speech, which is the opposite of the
+        model. Silence is exactly what the four-second constant exists to
+        consume: a cough pinned the peak, and the first word after a pause then
+        read about 56% of its correct height.
+        """
+        if dt > 0:
+            self._peak -= (self._peak - _PEAK_MIN) * min(1.0, dt / _PEAK_DECAY_S)
+            self._peak = max(_PEAK_MIN, self._peak)
+
+    def flat(self, dt: float) -> None:
+        self._decay_peak(dt)
+        self._flat(dt)
+
     def breathe(self, dt: float) -> None:
+        self._decay_peak(dt)
+        self._breathe(dt)
+
+    def _breathe(self, dt: float) -> None:
         """Silence: a slow pulse instead of a dead flat row."""
         if dt <= 0:
             return
@@ -148,7 +169,7 @@ class BarModel:
             s.step(dt)
             s.value = max(0.0, min(1.0, s.value))
 
-    def flat(self, dt: float) -> None:
+    def _flat(self, dt: float) -> None:
         """Listening, hearing nothing. Deliberately motionless: the contrast
         with the travelling wave is the whole signal."""
         if dt <= 0:

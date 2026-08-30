@@ -915,3 +915,39 @@ would have been a trade the user never got to make.
 
 **Verified as regressions:** 20 of the 35 new tests fail against the stashed source.
 457 tests, 17/17 checks.
+
+## 2026-08-30 — remediation tier 4: no silent quality loss
+
+**15 + 16 done as one change.** `polish.py` documented its copy of the learned
+term list as untrusted and sanitised it; the transcriber joined the same list
+raw, unbounded, past a conditioning window of about 224 tokens — so an oversized
+list did not merely fail to help, it silently cost decoding accuracy at the
+earliest point in the pipeline, where nothing downstream can recover it. And the
+cleanup prompt capped each term's length but not the count, so five thousand
+terms grew the system prompt to 49,782 characters on the latency path of every
+dictation. One sanitiser and one cap now live in `vocabulary.py`, which owns the
+set; both consumers read from it. Writing them separately is how they diverged.
+
+**17. The meter's gain only forgot while the user was talking.** The decay lived
+in `step()` alone, and `flat()`/`breathe()` — the paths that run during exactly
+the silence the four-second constant exists to consume — never touched it. A
+cough pinned the peak and the first word after a pause read ~56% of its height.
+
+**18. A forgotten session could record indefinitely.** One frame above the
+threshold reset the whole silence counter, so a door, a cough or an HVAC cycle
+once every ninety seconds kept it alive forever. Now requires 0.30s of continuous
+sound to call the session live again: short enough that a syllable counts, long
+enough that a click does not.
+
+*Two VAD tests failed and one of them encoded the defect.*
+`test_intermittent_speech_never_fires` asserted that intermittent sound never
+auto-stops — which is the finding, stated as a guarantee. Split into two: the
+real protection (someone talking with natural pauses is never cut off) and the
+fix (a room that is merely not silent does not keep a session alive). The other
+test's intent was sound and just needed sustained speech rather than one frame.
+
+**19. History search could not reach the cleaned column.** It searched raw, final
+and corrected; anything held only in `polished_text` was invisible to the only
+search API the panel has.
+
+470 tests, 17/17 checks.

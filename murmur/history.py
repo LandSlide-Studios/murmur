@@ -77,8 +77,12 @@ class History:
                 "SELECT * FROM sessions WHERE raw_text LIKE ? ESCAPE '\\'"
                 "   OR final_text LIKE ? ESCAPE '\\'"
                 "   OR corrected_text LIKE ? ESCAPE '\\'"
+                # The cleaned text was the one column search could not reach,
+                # so anything held only there was invisible to the only search
+                # API the panel has.
+                "   OR polished_text LIKE ? ESCAPE '\\'"
                 " ORDER BY ts DESC, id DESC LIMIT ?",
-                (like, like, like, limit),
+                (like, like, like, like, limit),
             ).fetchall()
         return [dict(r) for r in rows]
 

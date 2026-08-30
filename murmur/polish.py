@@ -55,6 +55,7 @@ _GROWTH_SLACK = 20
 # Floor on how much shorter the cleaned text may be. Removing fillers costs
 # roughly 5% of characters; anything under this ratio is truncation or a
 # summary, not a cleanup, and the raw transcript is used instead.
+_GLOSSARY_MAX_TERMS = 40
 _MIN_SHRINK_RATIO = 0.6
 _SHRINK_SLACK = 20
 
@@ -167,6 +168,12 @@ class Polisher:
             t = " ".join(t.split()).strip()[:60]
             if t:
                 out.append(t)
+            if len(out) >= _GLOSSARY_MAX_TERMS:
+                # Each term was capped and the COUNT was not, so five thousand
+                # learned terms grew the system prompt to 49,782 characters --
+                # on the latency path of every dictation, and pushing the
+                # transcript itself toward the context limit.
+                break
         return out
 
     def _system_prompt(self, glossary: list[str] | None = None) -> str:
