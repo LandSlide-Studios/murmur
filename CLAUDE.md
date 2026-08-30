@@ -34,6 +34,12 @@ Rebuild of Wispr Flow's behaviour on a local-only stack. Tommy's own tool, not c
   pre-roll only. It once gated the capture buffer to keep a cue out of the
   audio, and cost every dictation its opening words — short utterances sent
   nothing at all. No cue is worth a syllable of the user's speech.
+- **Ctrl+Win is a Windows shortcut prefix.** Ctrl+Win+D, Ctrl+Win+arrow and
+  Ctrl+Win+F are real system shortcuts. A key other than Ctrl/Win/Space/Esc
+  joining a HOLD discards the session. Hands-free must never do this:
+  talking while typing is the point of it.
+- **Never open a real audio device in a unit test.** A leaked PortAudio
+  stream crashes the interpreter at exit and swallows pytest's summary.
 - **Never do work inside the keyboard hook callback.** A `WH_KEYBOARD_LL` callback exceeding
   `LowLevelHooksTimeout` (~300ms) is silently unhooked by Windows and the hotkey dies with no
   error. The callback enqueues and returns. Nothing else.

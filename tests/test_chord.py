@@ -193,3 +193,57 @@ def test_autorepeat_after_toggle_stop_does_not_restart():
         ("down", CTRL, 30), ("down", WIN, 30),
     ])
     assert acts.count(Act.START_HOLD) == 1
+
+
+# --- a quick tap must work, and Windows shortcuts must not dictate ---
+
+def test_a_quick_tap_is_transcribed_not_thrown_away():
+    """350ms silently discarded every fast tap-and-talk. The pre-roll means
+    even a very short hold carries real audio, so the threshold only has to
+    reject a graze."""
+    for ms in (120, 150, 200, 300):
+        acts = drive(HOLD_DOWN + [("up", WIN, ms)], min_session_ms=120)
+        assert acts[-1] is Act.STOP_AND_TRANSCRIBE, f"{ms}ms was discarded"
+
+
+def test_a_graze_is_still_rejected():
+    assert drive(HOLD_DOWN + [("up", WIN, 60)], min_session_ms=120)[-1] is Act.DISCARD
+
+
+def test_windows_shortcuts_sharing_the_chord_do_not_dictate():
+    """Ctrl+Win is the prefix of real Windows shortcuts. Every one of these used
+    to start a session and then transcribe whatever the microphone caught."""
+    for key in ("d", "right", "left", "f", "enter", "tab"):
+        acts = drive(HOLD_DOWN + [
+            ("down", key, 60), ("up", key, 60), ("up", WIN, 400), ("up", CTRL, 10),
+        ])
+        assert Act.STOP_AND_TRANSCRIBE not in acts, f"Ctrl+Win+{key} dictated"
+        assert acts[-1] is Act.DISCARD
+
+
+def test_a_shortcut_pressed_late_still_cancels_the_session():
+    """Even past the minimum duration: the user reached for a shortcut."""
+    acts = drive(HOLD_DOWN + [("down", "d", 900), ("up", WIN, 100)])
+    assert Act.STOP_AND_TRANSCRIBE not in acts
+
+
+def test_space_is_still_the_promotion_and_not_a_shortcut():
+    acts = drive(HOLD_DOWN + [("down", SPACE, 60)])
+    assert acts[-1] is Act.PROMOTE_TOGGLE
+
+
+def test_esc_during_a_hold_still_cancels_rather_than_discards():
+    acts = drive(HOLD_DOWN + [("down", ESC, 400)])
+    assert acts[-1] is Act.CANCEL
+
+
+def test_typing_during_a_hands_free_session_does_not_end_it():
+    """Hands-free is for talking WHILE working. Only the hold state treats a
+    stray key as a shortcut."""
+    acts = drive(HOLD_DOWN + [
+        ("down", SPACE, 50), ("up", SPACE, 20), ("up", WIN, 20), ("up", CTRL, 20),
+        ("down", "a", 300), ("up", "a", 40),
+        ("down", "e", 40), ("up", "e", 40),
+    ])
+    assert Act.DISCARD not in acts
+    assert acts == [Act.START_HOLD, Act.PROMOTE_TOGGLE]

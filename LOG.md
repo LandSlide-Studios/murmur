@@ -2,6 +2,42 @@
 
 Newest first. What shipped, what failed, and why.
 
+## 2026-08-30 (evening) — quick taps were being thrown away
+
+"If I release too quickly it doesn't work." Measured rather than guessed, and
+two separate causes fell out.
+
+**1. Anything under 350ms was silently discarded.** `min_session_ms` existed to
+reject an accidental brush, but 350ms is longer than a deliberate quick press. A
+fast tap-and-talk produced no session, no pill, no feedback of any kind.
+
+**2. Windows shortcuts sharing the chord were being transcribed.** Ctrl+Win is
+the prefix of `Ctrl+Win+D` (new virtual desktop), `Ctrl+Win+arrow` (switch
+desktop) and `Ctrl+Win+F`. Every one of them produced START_HOLD then
+STOP_AND_TRANSCRIBE — so switching virtual desktops recorded whatever the
+microphone caught and pasted it. Never reported, certainly experienced.
+
+The two were linked: the high threshold was partly compensating for the second
+problem. Fixing the real cause let the threshold drop.
+
+- A key other than Ctrl/Win/Space/Esc joining a hold now DISCARDS the session:
+  the user is reaching for a shortcut, not dictating. Hands-free is untouched,
+  because talking while typing is the entire point of it.
+- `min_session_ms` 350 -> 120. With the 400ms pre-roll, even a 120ms hold
+  carries over half a second of audio, and a genuinely empty capture is caught
+  by the silence guard.
+
+**Latency was never the problem.** Measured keypress to microphone-capturing
+over six trials: median 11.7ms, worst 16.8ms, bounded by the 16ms UI tick — plus
+400ms of pre-roll from before the key went down.
+
+**Also fixed:** a test added this session called `Recorder.begin()`, which opens
+a real input device. Leaving a PortAudio stream open crashed the interpreter at
+exit and swallowed pytest's own summary line, so the suite could not report its
+own result.
+
+302 unit tests, 17/17 system checks.
+
 ## 2026-08-30 (later) — "hold-to-talk sometimes does not send": found it
 
 Tommy narrowed the report to hold-to-talk specifically, and that was the clue

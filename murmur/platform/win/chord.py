@@ -15,6 +15,9 @@ from dataclasses import dataclass
 from enum import Enum, auto
 
 MODIFIERS = ("ctrl", "win")
+# Keys that legitimately appear during a hold. Anything else means the user
+# is reaching for a Windows shortcut, not dictating.
+CHORD_KEYS = ("ctrl", "win", "space", "esc")
 
 
 class Act(Enum):
@@ -39,7 +42,7 @@ class Ev:
 
 
 class ChordFSM:
-    def __init__(self, min_session_ms: int = 350):
+    def __init__(self, min_session_ms: int = 120):
         self.min_session_ms = min_session_ms
         self.state = St.IDLE
         self.held: set[str] = set()
@@ -106,6 +109,13 @@ class ChordFSM:
             return []
 
         if self.state is St.REC_HOLD:
+            if ev.kind == "down" and ev.key not in CHORD_KEYS:
+                # Ctrl+Win is the prefix of real Windows shortcuts: Ctrl+Win+D
+                # for a new virtual desktop, Ctrl+Win+arrow to switch between
+                # them, Ctrl+Win+F to find PCs. Every one of those used to start
+                # and then transcribe a dictation. A key joining the chord means
+                # the user wants the shortcut, so drop the session.
+                return self._end(Act.DISCARD)
             if ev.kind == "down" and ev.key == "space":
                 self.state = St.REC_TOGGLE
                 self.armed_for_stop = False

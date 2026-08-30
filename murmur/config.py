@@ -25,7 +25,11 @@ DEFAULTS = {
     "audio": {
         "device": None,
         "silence_stop_seconds": 90,
-        "min_session_ms": 350,
+        # Low on purpose. This only has to reject a graze; a Windows shortcut
+        # sharing the chord is now discarded by the FSM instead, and a
+        # genuinely empty capture is caught by the silence guard. At 350ms
+        # every quick tap-and-talk was thrown away with no feedback at all.
+        "min_session_ms": 120,
         "sample_rate": 16000,
         "speech_rms_threshold": 0.012,
     },

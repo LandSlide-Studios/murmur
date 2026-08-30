@@ -117,14 +117,21 @@ def test_an_active_recording_is_never_muted():
 
 
 def test_a_short_utterance_survives_a_cue():
-    """The worst case: everything said fits inside the old mute window."""
+    """The worst case: everything said fits inside the old mute window.
+
+    The capture flags are set directly rather than via begin(), which would
+    open a real input device — a unit test that leaves a PortAudio stream open
+    crashes the interpreter at exit and swallows pytest's own summary.
+    """
     r = Recorder(sample_rate=16000)
-    r.begin()
+    r.buffer.reset()
+    r._capturing = True
     r.mute_for(500)
     for _ in range(6):                      # ~0.6s of speech
         r._callback(np.full(1600, 0.4, dtype=np.float32).reshape(-1, 1),
                     1600, None, None)
-    assert r.end().size == 6 * 1600
+    r._capturing = False
+    assert r.buffer.read_all().size == 6 * 1600
 
 
 def test_the_mute_still_keeps_cues_out_of_the_preroll():
