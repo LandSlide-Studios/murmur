@@ -576,3 +576,32 @@ bottom. `_PEAK_MIN` stops it auto-levelling the noise floor into a false signal.
 
 *Loose end, not fixed:* `pill.py:342` hardcodes `0.012` where `audio.speech_rms_threshold`
 already holds it. Tune the config and the pill will not follow.
+
+### 2026-08-30 — should the cleanup model be a smaller one?
+
+Asked because Whisper and qwen2.5:7b share an 8GB card. Benchmarked rather than
+reasoned about: `scripts/bench_polish.py` runs each candidate over 7 of his own
+real dictations and measures the three things that have already gone wrong here —
+latency, retention (content words kept, fillers excluded) and compliance (does it
+return only the cleaned text, or talk about the task).
+
+| model | size | p50 | retention | compliant |
+|---|---|---|---|---|
+| **qwen2.5:7b-instruct** | 4.7 GB | 580ms | **97.3%** | 100% |
+| deckard-4b | 2.7 GB | 40959ms | 0.0% | 0% (empty) |
+| phi3.5 | 2.2 GB | 490ms | 70.2% | 100% |
+| auto-variable-2b | 1.3 GB | 2872ms | 80.9% | 86% |
+
+**No.** Keep qwen2.5:7b. The trap is phi3.5: it is smaller AND faster, and it
+silently drops three content words in ten. That is the exact failure an
+adversarial pass caught before at 56% loss, and it would be invisible day to day —
+the text still reads fluently, it just says less than he said. deckard-4b returns
+nothing after 41 seconds.
+
+*Caveat:* Murmur was restarted mid-run, which reloaded Whisper into VRAM and makes
+the latency column inconsistent between models. Retention and compliance are
+unaffected, and the retention spread (97.3 / 80.9 / 70.2 / 0) is far too wide for
+timing to change the conclusion.
+
+The contention itself is already handled by `keep_alive`. Verified with both
+resident: qwen held for 29 minutes rather than 4, GPU at 6946/8151 MiB. It fits.
