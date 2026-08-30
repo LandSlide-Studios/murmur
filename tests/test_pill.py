@@ -188,7 +188,8 @@ def test_clicks_pass_through_unless_the_controls_are_showing(pill):
 
     pill.set_state("armed")
     assert pill.testAttribute(Qt.WA_TransparentForMouseEvents)
-    pill.set_state("recording", "hold")
+    pill.set_state("recording", "toggle")
+    settle(pill)                      # controls only exist once it has grown
     assert not pill.testAttribute(Qt.WA_TransparentForMouseEvents)
     pill.set_state("done")
     assert pill.testAttribute(Qt.WA_TransparentForMouseEvents)
@@ -198,7 +199,7 @@ def test_the_controls_appear_only_once_the_capsule_can_hold_them(pill):
     """Growing out of the sliver must not flash cramped glyphs on the way up."""
     pill.set_state("armed")
     settle(pill)
-    pill.set_state("recording", "hold")
+    pill.set_state("recording", "toggle")
     pill._tick()
     assert pill._button_rects() == (None, None), "controls drawn mid-morph"
     settle(pill)
@@ -207,7 +208,7 @@ def test_the_controls_appear_only_once_the_capsule_can_hold_them(pill):
 
 
 def test_the_tick_is_at_the_top_and_the_cross_at_the_bottom(pill):
-    pill.set_state("recording", "hold")
+    pill.set_state("recording", "toggle")
     settle(pill)
     accept, cancel = pill._button_rects()
     assert accept.top() < cancel.top()
@@ -224,7 +225,7 @@ def test_clicking_the_tick_asks_to_stop_and_paste(pill):
     fired = []
     pill.accepted.connect(lambda: fired.append("accept"))
     pill.cancelled_by_user.connect(lambda: fired.append("cancel"))
-    pill.set_state("recording", "hold")
+    pill.set_state("recording", "toggle")
     settle(pill)
     accept, cancel = pill._button_rects()
 
@@ -242,7 +243,7 @@ def test_clicking_the_waveform_between_them_does_nothing(pill):
     fired = []
     pill.accepted.connect(lambda: fired.append("accept"))
     pill.cancelled_by_user.connect(lambda: fired.append("cancel"))
-    pill.set_state("recording", "hold")
+    pill.set_state("recording", "toggle")
     settle(pill)
     pill.mouseReleaseEvent(QMouseEvent(
         QEvent.MouseButtonRelease, QPointF(pill._capsule_rect().center()),
@@ -264,3 +265,93 @@ def test_the_pill_got_smaller(pill):
     assert REC_SIZE[0] <= 30
     assert REC_SIZE[1] <= 140
     assert IDLE_SIZE[0] <= 12
+
+
+def test_the_pill_does_not_carry_its_own_copy_of_the_speech_threshold(qapp):
+    """It hardcoded 0.012 while the config held the real value. That copy sat
+    above his speaking voice, so the bars ran breathe() the whole time he talked
+    and no amount of tuning the meter could have shown up."""
+    import re
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parent.parent / "murmur" / "ui" / "pill.py"
+    body = src.read_text(encoding="utf-8")
+    gate = [ln for ln in body.splitlines() if "self.level >" in ln]
+    assert gate, "the speech gate moved; check this test still points at it"
+    for ln in gate:
+        assert not re.search(r"self\.level\s*>\s*0\.\d+", ln), \
+            f"threshold hardcoded again: {ln.strip()}"
+
+
+def test_main_feeds_the_configured_threshold_into_the_pill():
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parent.parent / "murmur" / "__main__.py"
+    body = src.read_text(encoding="utf-8")
+    assert "pill.speech_threshold = cfg.get(\"audio.speech_rms_threshold\")" in body
+
+
+def test_the_tick_and_cross_are_hands_free_only(qapp):
+    """In a push-to-talk hold his fingers are already on the keys that stop it.
+    A button he must release the chord to reach is worse than the chord."""
+    from murmur.ui.pill import Pill
+
+    pill = Pill()
+    pill.set_state("recording", mode="hold")
+    pill.width_s.value, pill.height_s.value = 30.0, 180.0
+    assert pill._controls_visible() is False
+    assert pill._button_rects() == (None, None)
+
+    pill.set_state("recording", mode="toggle")
+    pill.width_s.value, pill.height_s.value = 30.0, 180.0
+    assert pill._controls_visible() is True
+    accept, cancel = pill._button_rects()
+    assert accept is not None and cancel is not None
+    assert accept.top() < cancel.top(), "tick on top, cross on the bottom"
+    pill.close()
+
+
+def test_a_hold_session_stays_click_through(qapp):
+    """The controls are what forced the pill to accept clicks at all. With them
+    gone from hold mode, a hold must not be taking clicks either."""
+    from murmur.ui.pill import Pill
+    from PySide6.QtCore import Qt
+
+    pill = Pill()
+    pill.set_state("recording", mode="hold")
+    pill.width_s.value, pill.height_s.value = 30.0, 180.0
+    pill._set_click_through(not pill._controls_visible())
+    assert pill.testAttribute(Qt.WA_TransparentForMouseEvents) is True
+    pill.close()
+
+
+def test_a_full_scale_bar_very_nearly_spans_the_capsule(qapp):
+    """The side margin capped a full bar at 83% of the capsule width, so the
+    meter could not reach the edges even with the model pinned at 1.0."""
+    from murmur.ui.pill import REC_SIZE, Pill
+
+    w = float(REC_SIZE[0])
+    assert Pill.bar_length(1.0, w, 1.0) / w > 0.92
+
+
+def test_bar_length_spreads_his_speaking_range_across_the_capsule(qapp):
+    """At his measured 0.008 the model runs roughly 0.15..0.83. Those must be
+    visibly different lengths, not two similar stubs."""
+    from murmur.ui.pill import REC_SIZE, Pill
+
+    w = float(REC_SIZE[0])
+    short = Pill.bar_length(0.15, w, 1.0)
+    tall = Pill.bar_length(0.83, w, 1.0)
+    assert tall / short > 3.0
+    assert tall / w > 0.75
+
+
+def test_a_silent_bar_is_about_half_a_speaking_one(qapp):
+    """What he asked for: flat marks at roughly half the size of the bars."""
+    from murmur.ui.pill import REC_SIZE, Pill
+    from murmur.ui.waveform import FLAT
+
+    w = float(REC_SIZE[0])
+    silent = Pill.bar_length(FLAT, w, 1.0)
+    speaking = Pill.bar_length(0.66, w, 1.0)     # a typical bar at his voice
+    assert 0.35 < silent / speaking < 0.62

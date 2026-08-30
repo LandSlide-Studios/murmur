@@ -61,6 +61,21 @@ Rebuild of Wispr Flow's behaviour on a local-only stack. Tommy's own tool, not c
 - **One session writes exactly one history row.** The silence guard used to write
   its own row and then return, while the `finally` block wrote a second one
   claiming success with no text in it.
+- **Never judge "is there speech in this recording" with a mean.** The whole-clip
+  average falls as a dictation gets longer, because pauses count against it. A
+  42.4s dictation he spoke all the way through was discarded as silent. Use
+  `peak_rms` — the question is a maximum, not an average.
+- **Never hardcode a copy of `audio.speech_rms_threshold`.** `pill.py` carried its
+  own `0.012` and it drifted above his speaking voice, which silently stopped the
+  meter animating at all.
+- **Calibrate levels against HIS microphone, not a close mic.** eMeet C96 at arm's
+  length: ambient floor 0.00086, speaking voice ~0.008. Three separate constants
+  were set above his speaking voice — `speech_rms_threshold` at 0.012, the
+  meter's `_REFERENCE` at 0.06, and `_PEAK_MIN` at 0.020 — and each one made the
+  app behave as though he were not talking.
+- **Screenshots must be rendered at real microphone levels.** `probe_pill.py` drove
+  0.30 where his voice is 0.008. Every meter review was done against a saturated
+  picture, which is why it passed inspection and failed in his hand.
 - **Never claim GPU acceleration, or any verification, without an observed run.**
 
 ## Locked decisions
@@ -94,7 +109,7 @@ Dated. Do not re-litigate without a reason that is new.
 
 ## State
 
-**Complete and in daily use.** 313 unit tests, 2 live tests, 17/17 system checks
+**Complete and in daily use.** 342 unit tests, 2 live tests, 17/17 system checks
 via `scripts/verify.py`. Desktop shortcut, tray and launch-at-login in place.
 
 Two adversarial review passes have run against this code; their findings are fixed

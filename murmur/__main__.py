@@ -155,6 +155,10 @@ def main() -> int:
 
     pill = Pill(offset_px=cfg.get("ui.pill_offset_px"),
                 show_when_idle=cfg.get("ui.idle_indicator", True))
+    # One source of truth. The pill used to carry its own copy of this number,
+    # which drifted above his actual speaking voice and silently stopped the
+    # meter from ever animating for him.
+    pill.speech_threshold = cfg.get("audio.speech_rms_threshold")
     comet = Comet() if cfg.get("ui.comet", True) else None
     bridge = UiBridge(pill, comet=comet)
     murmur = MurmurApp(cfg, on_state=bridge)

@@ -105,6 +105,10 @@ class Pill(QWidget):
         self.state = "off"
         self.mode = "hold"
         self.level = 0.0
+        # Set from audio.speech_rms_threshold. Was hardcoded 0.012 — above
+        # his speaking voice, so the bars ran breathe() the entire time he
+        # talked and no amount of tuning the meter could have shown up.
+        self.speech_threshold = 0.004
 
         self.bars = BarModel(n=BARS)
         self.opacity = Spring(0.0, stiffness=200, damping=24)
@@ -199,7 +203,12 @@ class Pill(QWidget):
                       (self.height() - h) / 2, w, h)
 
     def _controls_visible(self) -> bool:
+        # Hands-free only. In a push-to-talk hold his fingers are already on the
+        # keys that stop it — a button he would have to let go of the chord to
+        # reach is worse than the chord. Hands-free is the mode where there is
+        # nothing held and therefore something to press.
         return (self.state in ACTIVE
+                and self.mode == "toggle"
                 and self.height_s.value >= BUTTON_MIN_H
                 and self.width_s.value >= 20)
 
@@ -280,8 +289,12 @@ class Pill(QWidget):
             return
         self.state = state
 
-        # Only clickable while recording, when the controls are on screen.
-        self._set_click_through(state not in ACTIVE)
+        # Clickable only when there is actually something to click. Keying this
+        # off the state alone meant a push-to-talk hold — which has no controls
+        # now — would still swallow clicks meant for the window underneath.
+        # _tick re-evaluates it as the capsule grows into and out of the size
+        # that can hold buttons.
+        self._set_click_through(not self._controls_visible())
 
         if state == "off":
             self.opacity.target = 0.0
@@ -338,11 +351,15 @@ class Pill(QWidget):
                   self.check):
             s.step(dt)
 
+        # The capsule animates into and out of the size that can hold controls,
+        # so this cannot be decided once at the state change.
+        self._set_click_through(not self._controls_visible())
+
         if self.state == "recording":
-            if self.level > 0.012:
+            if self.level > self.speech_threshold:
                 self.bars.step(self.level, dt)
             else:
-                self.bars.breathe(dt)
+                self.bars.flat(dt)
         elif self.state == "armed":
             self.bars.breathe(dt)
         elif self.state in WORKING:
@@ -449,6 +466,18 @@ class Pill(QWidget):
                 p.drawLine(QPointF(c.x() + 3.6, c.y() - 3.6),
                            QPointF(c.x() - 3.6, c.y() + 3.6))
 
+    @staticmethod
+    def bar_length(v: float, width: float, scale: float) -> float:
+        """Pixel length of a bar at meter value `v`, in a capsule `width` wide.
+
+        Pulled out of the painter so the mapping is testable. The side margin
+        used to be 8*scale, which capped a full-scale bar at 83% of the capsule —
+        the meter could not reach the edges even when the model was pinned.
+        """
+        room = max(2.0, width - 4.0 * scale)
+        floor = max(1.5, 2.5 * scale)
+        return floor + max(0.0, min(1.0, v)) * room
+
     def _draw_bars(self, p, rect, accent, area: QRectF) -> None:
         """Horizontal bars packed tight, length driven by the microphone.
 
@@ -464,14 +493,12 @@ class Pill(QWidget):
         thickness = max(1.0, (usable - gap * (n - 1)) / n)
         top = area.top() + inset
 
-        room = max(2.0, rect.width() - 8.0 * scale)
-        floor = max(1.5, 3.0 * scale)
         cx = rect.center().x()
 
         p.setPen(Qt.NoPen)
         p.setBrush(accent)
         for i, v in enumerate(values):
-            length = floor + v * room
+            length = self.bar_length(v, rect.width(), scale)
             y = top + i * (thickness + gap)
             p.drawRoundedRect(QRectF(cx - length / 2, y, length, thickness),
                               thickness / 2, thickness / 2)

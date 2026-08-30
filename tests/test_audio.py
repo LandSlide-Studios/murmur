@@ -80,3 +80,57 @@ def test_rms_of_constant_signal_is_its_magnitude():
 
 def test_rms_of_empty_block_is_zero_not_nan():
     assert rms(np.zeros(0, dtype=np.float32)) == 0.0
+
+
+# --- the reason a 42-second dictation was thrown away ------------------------
+
+def test_peak_rms_finds_speech_that_the_average_buries():
+    """THE bug this function exists for.
+
+    A 42.4s hold with the user talking through it was logged as "recording is
+    silent" and discarded. The guard averaged RMS over the whole clip, so every
+    thinking pause counted against it: the longer the dictation, the more likely
+    it was thrown away. Backwards from how it should behave.
+    """
+    from murmur.audio import peak_rms, rms
+
+    sr = 16000
+    rng = np.random.default_rng(0)
+    clip = rng.normal(0, 0.00086, sr * 42).astype(np.float32)   # his measured floor
+    clip[:sr * 12] = rng.normal(0, 0.008, sr * 12)              # 12s of real speech
+
+    assert rms(clip) < 0.006, "precondition: the old guard discarded this"
+    assert peak_rms(clip, sr) > 0.006, "speech is plainly in there"
+
+
+def test_a_longer_pause_does_not_make_a_recording_look_emptier():
+    """The average punishes length. The peak must not."""
+    from murmur.audio import peak_rms
+
+    sr = 16000
+    rng = np.random.default_rng(1)
+    speech = rng.normal(0, 0.008, sr * 5).astype(np.float32)
+
+    levels = []
+    for pause_s in (0, 10, 30, 60):
+        clip = np.concatenate(
+            [speech, rng.normal(0, 0.00086, sr * pause_s).astype(np.float32)])
+        levels.append(peak_rms(clip, sr))
+    assert max(levels) - min(levels) < 0.001, f"length changed the verdict: {levels}"
+
+
+def test_peak_rms_still_calls_a_truly_empty_room_silent():
+    """It must not become so permissive that a cue or a cough sends a dictation."""
+    from murmur.audio import peak_rms
+
+    sr = 16000
+    room = np.random.default_rng(2).normal(0, 0.00086, sr * 20).astype(np.float32)
+    assert peak_rms(room, sr) < 0.006
+
+
+def test_peak_rms_handles_clips_shorter_than_one_window():
+    from murmur.audio import peak_rms
+
+    assert peak_rms(np.zeros(0, dtype=np.float32), 16000) == 0.0
+    loud = np.full(800, 0.3, dtype=np.float32)
+    assert peak_rms(loud, 16000) > 0.2

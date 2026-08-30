@@ -43,7 +43,11 @@ def shot(name, bg="#1B1D22", zoom=2):
 # 0.012, a normal speaking voice sits near 0.03 and loud talking near 0.075.
 # These used to be 0.30 and 0.50 — ten times a real voice — so every shot was
 # saturated and showed a meter nobody would ever see.
-QUIET, NORMAL, LOUD = 0.014, 0.030, 0.075
+# Solved back from the 42.4s dictation that fell under the old guard while he
+# talked through it: his speaking voice on the eMeet C96 reads about 0.008, not
+# the 0.03 a close mic would give. Rendering at 0.03 was still three times his
+# real voice, which is how the meter kept passing review and failing in his hand.
+QUIET, NORMAL, LOUD = 0.004, 0.008, 0.020
 
 print("rendering states:")
 pill.set_state("armed")
@@ -60,6 +64,11 @@ shot("02-recording-loud")
 pill.set_state("recording", mode="toggle")
 advance(60, level=NORMAL)
 shot("03-recording-handsfree")
+
+# Listening and hearing nothing. Flat, uniform, about half a speaking bar —
+# the contrast against the travelling wave is the whole point of it.
+advance(90, level=0.0)
+shot("04-silence-flat")
 
 pill.set_state("transcribing")
 advance(45)

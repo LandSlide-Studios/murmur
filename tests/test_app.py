@@ -230,3 +230,60 @@ def test_a_real_recording_also_writes_exactly_one_row(app, monkeypatch):
     assert len(rows) == 1
     assert rows[0]["status"] == "ok"
     assert rows[0]["final_text"] == "hello there"
+
+
+def test_a_long_dictation_full_of_pauses_is_not_discarded_as_silent(app, monkeypatch):
+    """The one he kept hitting.
+
+    16:17:45  recording is silent (42.4s); nothing to transcribe
+
+    He held the chord for 42.4 seconds, talked the whole way through, and the
+    app threw it away. The guard averaged RMS across the entire recording, so
+    every thinking pause dragged the number down: the longer the dictation, the
+    more likely it vanished. Exactly backwards.
+
+    Levels here are his measured ones — ambient floor 0.00086 on the eMeet C96,
+    speech around 0.008.
+    """
+    import numpy as np
+
+    class FakeStt:
+        def transcribe(self, pcm, hotwords):
+            return "the words he actually said"
+
+    monkeypatch.setattr(app, "_stt", FakeStt())
+    monkeypatch.setattr(app.polisher, "enabled", False)
+    monkeypatch.setattr(app.injector, "copy", lambda t: True)
+
+    # The property that actually separates the two guards is length-invariance.
+    # Lowering the threshold alone moves the cliff; it does not remove it. Same
+    # speech, far more silence around it — the verdict must not change.
+    sr = 16000
+    rng = np.random.default_rng(7)
+    speech = rng.normal(0, 0.008, sr * 4).astype(np.float32)
+    pcm = np.concatenate(
+        [speech, rng.normal(0, 0.00086, sr * 90).astype(np.float32)])
+
+    from murmur.audio import rms
+    assert rms(pcm) < app.cfg.get("audio.speech_rms_threshold") / 2,         "precondition: the old whole-clip average would have discarded this"
+
+    app._process(pcm, A.Session(9, "hold"), 94_000)
+
+    rows = app.history.recent()
+    assert len(rows) == 1
+    assert rows[0]["status"] != "empty", "discarded a dictation he spoke through"
+    assert rows[0]["final_text"] == "the words he actually said"
+
+
+def test_the_guard_still_rejects_a_recording_of_an_empty_room(app, monkeypatch):
+    """The counterweight: loosening the guard must not start feeding silence to
+    Whisper, which invents words from it — a clip of nothing but an audio cue
+    once transcribed to "Thanks."."""
+    import numpy as np
+
+    monkeypatch.setattr(app, "_stt", object())        # must never be reached
+    room = np.random.default_rng(8).normal(0, 0.00086, 16000 * 20).astype(np.float32)
+    app._process(room, A.Session(10, "hold"), 20_000)
+
+    rows = app.history.recent()
+    assert len(rows) == 1 and rows[0]["status"] == "empty"

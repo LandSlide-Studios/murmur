@@ -19,7 +19,7 @@ import threading
 import time
 from pathlib import Path
 
-from .audio import Recorder, rms
+from .audio import Recorder, peak_rms, rms
 from .config import Config
 from .corrections import Corrections
 from .history import History
@@ -361,7 +361,14 @@ class MurmurApp:
             # Whisper invents words from non-speech: a recording of nothing but
             # an audio cue transcribed to "Thanks." If the whole clip is below
             # the speech threshold there is nothing to transcribe.
-            if rms(pcm) < self.cfg.get("audio.speech_rms_threshold") / 2:
+            # peak_rms, NOT rms. The average of a whole recording gets quieter
+            # the longer someone talks, because pauses count against it — a
+            # 42.4s dictation he spoke all the way through was discarded as
+            # silent. "Is there any speech in here" is a maximum, not a mean.
+            loudest = peak_rms(pcm, self.cfg.get("audio.sample_rate"))
+            log.info("level: loudest 400ms window %.4f over %.1fs",
+                     loudest, dur_ms / 1000)
+            if loudest < self.cfg.get("audio.speech_rms_threshold") / 2:
                 log.info("recording is silent (%.1fs); nothing to transcribe",
                          dur_ms / 1000)
                 # Set the status and fall through: the finally block writes the

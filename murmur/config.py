@@ -31,7 +31,13 @@ DEFAULTS = {
         # every quick tap-and-talk was thrown away with no feedback at all.
         "min_session_ms": 120,
         "sample_rate": 16000,
-        "speech_rms_threshold": 0.012,
+        # Measured on his eMeet C96 webcam: ambient floor p99 0.00086, and
+        # speech somewhere near 0.007-0.010 (solved back from a 42.4s dictation
+        # that fell under the old guard while he was talking through it). 0.012
+        # sat ABOVE his speaking voice, so his speech counted as silence in all
+        # three places this is used. 0.004 is ~4.6x his noise floor and well
+        # under his quietest talking.
+        "speech_rms_threshold": 0.004,
     },
     "stt": {
         "backend": "local",

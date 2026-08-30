@@ -50,8 +50,12 @@ def test_breathe_keeps_bars_near_the_floor_and_moving():
 
 
 def test_louder_input_produces_taller_bars_than_quieter():
-    quiet = max(drive(BarModel(n=5), 0.05, frames=60))
-    loud = max(drive(BarModel(n=5), 0.6, frames=60))
+    # Levels a microphone actually produces. This used to compare 0.05 against
+    # 0.6; both are far above full scale, and with the meter auto-levelling they
+    # correctly read the same. The property is meant to hold in the band people
+    # speak in, not out past where a signal can exist.
+    quiet = max(drive(BarModel(n=5), 0.005, frames=60))
+    loud = max(drive(BarModel(n=5), 0.015, frames=60))
     assert loud > quiet
 
 
@@ -137,7 +141,7 @@ def test_the_response_is_compressive_not_linear():
     nobody dictates at, which is why the useful band sat squashed at the bottom.
     Going from quiet to normal must move the meter more than going from loud to
     shouting moves it."""
-    quiet_to_normal = _peak(0.03) - _peak(0.012)
+    quiet_to_normal = _peak(0.008) - _peak(0.004)
     loud_to_shouting = _peak(0.15) - _peak(0.06)
     assert quiet_to_normal > loud_to_shouting
 
@@ -184,8 +188,10 @@ def test_the_row_keeps_real_troughs_and_does_not_flatten_into_a_block():
 
 def test_a_quiet_talker_still_gets_a_tall_meter():
     """A soft voice on a distant mic must not be stuck at the bottom just
-    because the reference level was chosen for someone louder."""
-    assert _peak(0.015, frames=600) > 0.5
+    because the reference level was chosen for someone louder. 0.008 is HIS
+    measured voice; it reached 35% before this was recalibrated."""
+    assert _peak(0.008, frames=600) > 0.7
+    assert _peak(0.015, frames=600) > 0.8
 
 
 def test_a_loud_talker_does_not_sit_pinned_and_flat():
@@ -197,10 +203,11 @@ def test_a_loud_talker_does_not_sit_pinned_and_flat():
     assert max(h) / max(min(h), 1e-6) > 2.0, "adapted itself into a solid block"
 
 
-def test_it_does_not_amplify_the_noise_floor():
-    """His measured ambient p99 is 0.00086. Auto-levelling that up would make
-    the pill look like it is hearing speech in an empty room."""
-    assert _peak(0.00086, frames=900) < 0.2
+def test_it_does_not_amplify_an_absence_of_signal():
+    """Auto-levelling must not manufacture a signal. Sub-threshold audio never
+    reaches this model at all — the pill shows a flat row instead — so the
+    guarantee here is the one that matters: no input, no meter."""
+    assert _peak(0.0, frames=900) < 0.12
 
 
 def test_loudness_still_registers_within_one_adapted_state():
@@ -208,8 +215,44 @@ def test_loudness_still_registers_within_one_adapted_state():
     outrun a murmur before the meter has had time to re-fit."""
     m = BarModel(n=15)
     for _ in range(300):
-        m.step(level=0.02, dt=1 / 60)
+        m.step(level=0.005, dt=1 / 60)
     settled = max(m.heights())
     for _ in range(10):
-        m.step(level=0.09, dt=1 / 60)
+        m.step(level=0.015, dt=1 / 60)
     assert max(m.heights()) > settled
+
+
+# --- listening but hearing nothing -------------------------------------------
+
+def test_silence_shows_a_flat_row_at_about_half_a_speaking_bar():
+    from murmur.ui.waveform import FLAT
+
+    m = BarModel(n=15)
+    for _ in range(200):
+        m.flat(dt=1 / 60)
+    h = m.heights()
+    assert max(h) - min(h) < 0.02, "the silent row must read as flat"
+    assert abs(sum(h) / len(h) - FLAT) < 0.03
+
+
+def test_the_silent_row_is_clearly_shorter_than_a_speaking_one():
+    quiet = BarModel(n=15)
+    for _ in range(200):
+        quiet.flat(dt=1 / 60)
+    talking = BarModel(n=15)
+    for _ in range(200):
+        talking.step(level=0.03, dt=1 / 60)
+    q = sum(quiet.heights()) / 15
+    t = sum(talking.heights()) / 15
+    assert t > q * 1.6, f"silent {q:.2f} vs speaking {t:.2f} — not distinguishable"
+
+
+def test_the_silent_row_does_not_animate():
+    """Flat versus wave is the signal. A pulsing idle row muddies it."""
+    m = BarModel(n=15)
+    for _ in range(200):
+        m.flat(dt=1 / 60)
+    settled = m.heights()
+    for _ in range(60):
+        m.flat(dt=1 / 60)
+    assert all(abs(a - b) < 1e-3 for a, b in zip(settled, m.heights()))

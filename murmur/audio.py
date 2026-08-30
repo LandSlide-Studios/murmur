@@ -36,6 +36,32 @@ def rms(block: np.ndarray) -> float:
     return float(np.sqrt(np.mean(np.square(block.astype(np.float64)))))
 
 
+def peak_rms(pcm: np.ndarray, sample_rate: int = 16000,
+             window_ms: int = 400) -> float:
+    """The loudest short window in a recording, not the average of all of it.
+
+    This exists because the average is the wrong question. "Was this recording
+    loud on average?" gets quieter the longer someone talks, because thinking
+    pauses count against it. A 42.4-second dictation was thrown away as silent
+    while the user was speaking through it — the longer the hold, the more
+    likely the loss, which is exactly backwards.
+
+    The right question is "is there ANY speech in here?", and that is a maximum,
+    not a mean. One window over the threshold means someone spoke.
+    """
+    pcm = np.asarray(pcm, dtype=np.float32).ravel()
+    if pcm.size == 0:
+        return 0.0
+    win = max(1, int(sample_rate * window_ms / 1000))
+    if pcm.size <= win:
+        return rms(pcm)
+    n = pcm.size // win
+    blocks = pcm[:n * win].reshape(n, win).astype(np.float64)
+    best = float(np.sqrt(np.square(blocks).mean(axis=1)).max())
+    tail = pcm[n * win:]
+    return max(best, rms(tail)) if tail.size >= win // 2 else best
+
+
 class RingBuffer:
     """Fixed-capacity float32 buffer. Drops the oldest samples when full, so a
     forgotten session consumes bounded memory instead of growing forever."""

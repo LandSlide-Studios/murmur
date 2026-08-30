@@ -605,3 +605,62 @@ timing to change the conclusion.
 
 The contention itself is already handled by `keep_alive`. Verified with both
 resident: qwen held for 29 minutes rather than 4, GPU at 6946/8151 MiB. It fits.
+
+## 2026-08-30 — the "it just did not send" bug, found
+
+```
+16:17:45  recording is silent (42.4s); nothing to transcribe
+```
+
+He held the chord for 42.4 seconds, talked the whole way through, and the app
+threw it away. Not the chord, not a discard, not a race — the audio was captured
+correctly. `dur_ms` is computed from `len(pcm)`, so the buffer genuinely held
+42.4 seconds. The guard rejected it.
+
+**Root cause.** `rms(pcm) < threshold / 2` averages across the entire recording.
+Every thinking pause pulls that average down, so the verdict gets *worse the
+longer you talk* — precisely backwards. Modelled at a webcam-mic level, speaking
+14 of 42 seconds was enough to be discarded. The question "is there speech here"
+is a maximum, not a mean. Replaced with `peak_rms`, the loudest 400ms window.
+
+**Second root cause, and the one that explains the rest.** Solving backwards from
+that failure: for a 42.4s clip he spoke ~20-30s of to land under the old guard,
+his speaking voice reads about **0.007-0.010** on the eMeet C96. `speech_rms_threshold`
+was **0.012** — *above* his voice. It is used in three places:
+
+| site | consequence |
+|---|---|
+| the silence guard | dictations discarded |
+| `vad.py` auto-stop | hands-free could stop mid-sentence |
+| `pill.py:342`, a hardcoded copy | **bars ran `breathe()` the entire time he talked** |
+
+That last one is why "it's still not big enough" survived a day of meter tuning:
+`step()` was never reached. None of the sensitivity work could have shown up.
+Threshold lowered to 0.004 (4.6x his measured noise floor of 0.00086, well under
+his quietest talking), and the pill now reads it from config instead of carrying
+a copy.
+
+Two more constants had the same defect once found: the meter's `_REFERENCE` at
+0.06 and `_PEAK_MIN` at 0.020, both above his speaking voice. At 0.06 the meter
+reached 35% for him no matter what else was tuned. Now 0.020 and 0.004 — his
+voice lands near 83% with headroom left above it.
+
+And `probe_pill.py` was still driving `level=0.030`, three times his real voice,
+after I had already fixed it once from 0.30. Every screenshot review was done
+against a saturated picture.
+
+**Honest note on the regression test.** My first version passed against the old
+code — lowering the threshold alone had covered the synthetic case, so it proved
+nothing. Rewritten around the property that actually separates the two guards:
+length-invariance. Same speech, 90s more silence around it, same verdict.
+Confirmed failing on the old guard and passing on the new.
+
+**Also this batch, both asked for:**
+- Silence now shows a flat, motionless row at half a speaking bar's length,
+  instead of a breathing floor. Flat versus wave is a binary readable at a glance.
+- The tick and cross are hands-free only. In a push-to-talk hold his fingers are
+  already on the keys that stop it. That made the pill click-through in hold
+  again, which had to be tied to whether controls exist rather than to state.
+- A full-scale bar was capped at 83% of the capsule by the side margin; now 95%.
+
+342 tests, 17/17 checks.

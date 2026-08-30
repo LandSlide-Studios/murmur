@@ -12,11 +12,19 @@ from .motion import Spring
 FLOOR = 0.08          # idle height, so the pill never looks dead
 _BREATHE_HZ = 0.4
 
-# The level a typical dictating voice peaks at. `audio.speech_rms_threshold` is
-# 0.012, so the band that matters — quiet talking up to loud talking — is
-# roughly 0.012..0.09, and this sits inside it rather than somewhere out past
-# shouting, which is where a linear gain of 9.0 effectively put it.
-_REFERENCE = 0.06
+# The level a dictating voice peaks at ON HIS MICROPHONE. This was 0.06, chosen
+# for a close mic, and it is the third constant in this app to have been set
+# above his actual speaking voice — the other two being
+# `audio.speech_rms_threshold` and `_PEAK_MIN` below. His eMeet C96 at arm's
+# length reads about 0.008, solved back from the 42.4s dictation that fell under
+# the old silence guard while he talked through it. At 0.06 the meter reached
+# 35% for him no matter what else was tuned.
+#
+# Not pushed all the way down to his 0.008 either: that put his normal voice at
+# 94% and left the meter with nothing to say about loudness, since everything
+# from the speech threshold upward pinned at the top. 0.020 lands him near 80%
+# with room above.
+_REFERENCE = 0.020
 
 # ...but a fixed reference is a guess about someone else's voice and someone
 # else's microphone. Tommy is on a webcam at arm's length, not a headset. So the
@@ -27,8 +35,18 @@ _REFERENCE = 0.06
 # HALF way toward whatever voice is in front of it. Full adaptation would make
 # a murmur and a shout look identical; none of it leaves a soft speaker stuck at
 # the bottom. Half keeps the dynamics and still fits the person.
+# What the row shows while it is listening and hearing nothing: flat, uniform,
+# about half the length of a bar carrying a normal speaking voice. Tommy asked
+# for this over the breathing floor it used to show — flat versus wave is a
+# binary anyone can read at a glance, where a slow pulse at 8% just looked like
+# a quieter version of the same thing.
+FLAT = 0.30
+
 _PEAK_DECAY_S = 4.0            # how fast it forgets a loud moment
-_PEAK_MIN = 0.020              # never adapt below this, or silence gets amplified
+# Never adapt below this. It belongs just at the speech threshold, NOT above a
+# speaking voice: at 0.020 it sat above his, so the adaptation could never track
+# down to him and the fixed reference won every time.
+_PEAK_MIN = 0.004
 _PEAK_MAX = 0.200
 
 # Loudness is logarithmic, so a linear map spends most of its range on volumes
@@ -123,5 +141,15 @@ class BarModel:
         pulse = FLOOR + 0.04 * (1.0 + math.sin(self.t * _BREATHE_HZ * 2 * math.pi))
         for s in self.springs:
             s.target = pulse
+            s.step(dt)
+            s.value = max(0.0, min(1.0, s.value))
+
+    def flat(self, dt: float) -> None:
+        """Listening, hearing nothing. Deliberately motionless: the contrast
+        with the travelling wave is the whole signal."""
+        if dt <= 0:
+            return
+        for s in self.springs:
+            s.target = FLAT
             s.step(dt)
             s.value = max(0.0, min(1.0, s.value))
