@@ -521,3 +521,58 @@ distant spread, and a check that the row still changes shape rather than settlin
 into a static arch.
 
 316 tests.
+
+### 2026-08-30, later — "they're just not getting tall enough"
+
+He was right, and by more than it sounded. Measured before touching anything:
+
+| mic RMS | tallest bar | |
+|---|---|---|
+| 0.012 | 10.8% | the speech threshold — talking quietly looked like silence |
+| 0.030 | 28.3% | a normal speaking voice |
+| 0.060 | 57.1% | loud |
+
+Two independent causes, both structural rather than a matter of taste.
+
+**A linear gain wastes the range.** `norm = clamp(level * 9.0)` puts full scale at
+RMS 0.111, out past shouting, so the band anyone actually dictates in was squashed
+into the bottom third. Loudness is logarithmic; the map should be too. Replaced
+with a square-root curve against a reference near the top of the speaking band.
+
+**The oscillator could only ever scale bars down.** `target = norm × centre × osc`
+with `osc` averaging 0.55 meant that even a *clipping* input averaged 40% height —
+the meter could not look full by construction. The wave now modulates around 0.64
+instead of multiplying down from 1.0.
+
+I overcorrected on the way and it is worth recording. Pushing the bias to 0.72 and
+easing the centre taper made the row tall and killed it — a solid block, no longer
+reading as a voice. The test I had written (average height > 0.6) was itself wrong:
+a waveform with real troughs cannot satisfy it. Replaced with the pair that actually
+expresses the goal — a full input must reach full height, AND crests must stand
+2.5x clear of troughs. Both are now pinned.
+
+**The screenshots had been lying the whole time.** `probe_pill.py` drove `level=0.30`
+and `0.50`. Real speech RMS is about 0.03. Every shot I had been judging composition
+against was saturated at ten times a real voice, which is why the meter looked
+acceptable in review and wrong in his hand. The probe now uses measured levels.
+
+**The fixed reference was still a guess about someone else's voice.** His mic is an
+eMeet C96 webcam at arm's length, not a headset. Measured its floor: ambient p99
+0.00086, 7% of the speech threshold, so the mic is clean and the headroom is real —
+but nothing there tells us how loud *he* reads. Rather than ship a guess, the meter
+now tracks a decaying peak and blends it with the fixed reference as a geometric
+mean: half way toward whatever voice is in front of it. Full adaptation would make
+a murmur and a shout identical; none of it leaves a soft speaker stuck at the
+bottom. `_PEAK_MIN` stops it auto-levelling the noise floor into a false signal.
+
+| mic RMS | was | now |
+|---|---|---|
+| 0.012 | 10.8% | 61.1% |
+| 0.020 | 18.5% | 78.9% |
+| 0.030 | 28.3% | 87.3% |
+| 0.060 | 57.1% | 100% |
+
+326 tests.
+
+*Loose end, not fixed:* `pill.py:342` hardcodes `0.012` where `audio.speech_rms_threshold`
+already holds it. Tune the config and the pill will not follow.

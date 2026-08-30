@@ -39,20 +39,26 @@ def shot(name, bg="#1B1D22", zoom=2):
           f"{pill.height_s.value:4.1f}  opacity {pill.opacity.value:.2f}")
 
 
+# Real microphone RMS, not arbitrary numbers. `audio.speech_rms_threshold` is
+# 0.012, a normal speaking voice sits near 0.03 and loud talking near 0.075.
+# These used to be 0.30 and 0.50 — ten times a real voice — so every shot was
+# saturated and showed a meter nobody would ever see.
+QUIET, NORMAL, LOUD = 0.014, 0.030, 0.075
+
 print("rendering states:")
 pill.set_state("armed")
 advance(90)
 shot("00-armed-idle")
 
 pill.set_state("recording", mode="hold")
-advance(60, level=0.30)
+advance(60, level=NORMAL)
 shot("01-recording-hold")
 
-advance(30, level=0.50)
+advance(30, level=LOUD)
 shot("02-recording-loud")
 
 pill.set_state("recording", mode="toggle")
-advance(60, level=0.28)
+advance(60, level=NORMAL)
 shot("03-recording-handsfree")
 
 pill.set_state("transcribing")
@@ -68,7 +74,7 @@ advance(24)
 shot("06-done-check")
 
 pill.set_state("recording", mode="hold")
-advance(40, level=0.3)
+advance(40, level=NORMAL)
 pill.set_state("cancelled")
 advance(6)
 shot("07-cancelled-shake")
