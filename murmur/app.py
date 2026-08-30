@@ -107,6 +107,7 @@ class MurmurApp:
         self._inflight: Session | None = None
         self._seq = 0
         self._last_level_t: float | None = None
+        self._aim: tuple[int, int] | None = None
         self._handlers = {
             Act.START_HOLD: lambda: self._start("hold"),
             Act.PROMOTE_TOGGLE: self._promote,
@@ -155,8 +156,7 @@ class MurmurApp:
             except Exception:
                 log.exception("could not preload the speech model")
             try:
-                if self.polisher.enabled:
-                    self.polisher.polish("warm up", glossary=None)
+                self.polisher.warm()
             except Exception:
                 log.debug("cleanup model warm-up failed", exc_info=True)
 
@@ -217,6 +217,18 @@ class MurmurApp:
     # being pressed. The silence guard in _process is the backstop.
     CUE_MUTE_SLACK_MS = 400
 
+    @staticmethod
+    def _cursor_point():
+        try:
+            import ctypes
+            import ctypes.wintypes
+
+            pt = ctypes.wintypes.POINT()
+            ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
+            return (int(pt.x), int(pt.y))
+        except Exception:
+            return None
+
     def _cue(self, name: str) -> None:
         """Play a cue and mute capture while it sounds.
 
@@ -252,6 +264,9 @@ class MurmurApp:
                 return
             session, self._session = self._session, None
             pcm = self.recorder.end()
+        # Where the mouse is NOW. The comet is ballistic: it flies to where you
+        # were when you stopped talking, not to wherever the cursor drifts to.
+        self._aim = self._cursor_point()
         dur_ms = int(len(pcm) / self.cfg.get("audio.sample_rate") * 1000)
         self.on_state("transcribing")
         self._jobs.put((pcm, session, dur_ms))
@@ -355,6 +370,16 @@ class MurmurApp:
                 final = self.vocab.apply(polished)
                 if session.cancelled:
                     status = "cancelled"
+                elif self.cfg.get("ui.comet", True):
+                    # The transcript is on the clipboard BEFORE anything moves,
+                    # so a failed animation can never cost the user their words.
+                    released = self.injector.copy(final)
+                    self._cue("done")
+                    log.info("[%s] %s", mode, final)
+                    if released:
+                        self.on_state("flying", text=final, aim=self._aim)
+                    else:
+                        self.on_state("copied", text=final)
                 else:
                     pasted = self.injector.inject(final)
                     self._cue("done")

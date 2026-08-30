@@ -49,7 +49,8 @@ DEFAULTS = {
     "clipboard": {"restore_previous": False},
     "learning": {"enabled": True, "promote_after_hits": 2, "uia_readback": True},
     "ui": {"pill_position": "right-center", "pill_offset_px": 12,
-           "idle_indicator": True},
+           "idle_indicator": True,
+           "comet": True},
     # Tommy's decision 2026-08-29: launch at login is on by default.
     "autostart": True,
 }
@@ -72,6 +73,7 @@ _TYPES = {
     "learning.uia_readback": (bool,),
     "ui.pill_offset_px": (int,),
     "ui.idle_indicator": (bool,),
+    "ui.comet": (bool,),
     "sound.enabled": (bool,),
     "autostart": (bool,),
 }

@@ -110,7 +110,12 @@ def main():
     qapp = QApplication(sys.argv)
     qapp.setQuitOnLastWindowClosed(False)
     pill = Pill(offset_px=cfg.get("ui.pill_offset_px"))
-    mu = MurmurApp(cfg, on_state=entry.UiBridge(pill))
+    from murmur.ui.comet import Comet
+
+    comet = Comet() if cfg.get("ui.comet", True) else None
+    bridge = entry.UiBridge(pill, comet=comet)
+    mu = MurmurApp(cfg, on_state=bridge)
+    bridge.injector = mu.injector
 
     # The REAL Recorder is used, opened against the real device. A script
     # cannot speak, so known audio is written into the real ring buffer after a
@@ -184,7 +189,7 @@ def main():
         settle(0.6)
         recording = pill.state == "recording" and pill.mode == "hold"
         tap(VK_LWIN, False); tap(VK_CONTROL, False)
-        settle(9)
+        settle(11)
         after = (read_window_text(hwnd) or "").strip()
         check("pill showed 'recording' in hold mode", recording)
         # Assert on substance, not exact wording: the cleanup step is an LLM
@@ -207,7 +212,7 @@ def main():
         check("hands off: session survived releasing the chord", promoted)
         tap(VK_CONTROL); tap(VK_LWIN); tap(VK_SPACE)
         tap(VK_SPACE, False); tap(VK_LWIN, False); tap(VK_CONTROL, False)
-        settle(9)
+        settle(11)
         after2 = (read_window_text(hwnd) or "").strip()
         check("second chord stopped it and pasted", len(after2) > len(mark))
 

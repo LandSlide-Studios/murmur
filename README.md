@@ -48,6 +48,26 @@ from the corner of your eye in a way an 8pt word is not.
 
 It is click-through and never takes focus, so it cannot swallow the paste.
 
+### The comet
+
+When a dictation finishes, the pill contracts and **throws your transcript to
+where your pointer was the instant you stopped talking** — a 110ms pull-back,
+then a 260ms streak that elongates at mid-flight and bursts on arrival. The
+Ctrl+V fires exactly as it lands, so the paste and the animation are the same
+event rather than one decorating the other.
+
+It is ballistic on purpose: it aims where the pointer *was*, and never corrects.
+Chasing a moving cursor reads as the animation following you; not chasing reads
+as a delivery.
+
+The transcript reaches the clipboard **before** anything moves, so a failed
+animation can never cost you the text. Turn it off with `ui.comet`, and the
+paste happens immediately instead.
+
+This motion is adapted from [Sotto](https://github.com/kingbootoshi/sotto)
+(MIT), a macOS dictation app whose design workbenches worked out exactly these
+timings. See [NOTICE.md](NOTICE.md).
+
 `ui.pill_offset_px` is the gap from the right edge; `ui.idle_indicator` turns the
 sliver off. Pausing **Listening** from the tray hides it too — the indicator is
 the honest answer to whether the hotkeys are live.
@@ -169,6 +189,7 @@ what you changed is written back, so upgrades keep reaching you.
 | `learning.promote_after_hits` | `2` | Sightings before an automatic correction applies. |
 | `sound.enabled` | `true` | Start / done / cancel tones. |
 | `ui.idle_indicator` | `true` | Show the dim sliver between dictations. |
+| `ui.comet` | `true` | Throw the transcript to your cursor on finish. |
 | `ui.pill_offset_px` | `12` | Gap between the pill and the right edge. |
 | `autostart` | `true` | Launch at login. |
 
@@ -221,6 +242,7 @@ defaults were chosen, and they are committed alongside the decisions they justif
 | `probe_pipeline.py` | End-to-end: recorded speech in, text in a real app out |
 | `bench_stt.py` | Model speed and VRAM on this machine |
 | `probe_panels.py` | Renders the History and Vocabulary panels |
+| `probe_comet.py` | Renders the comet's flight as a trail and a filmstrip |
 | `make_sounds.py` | Regenerates the audio cues |
 | `make_icon.py` | Regenerates the app icon |
 
@@ -230,4 +252,13 @@ defaults were chosen, and they are committed alongside the decisions they justif
 injection, UI Automation, autostart, single-instance. A macOS port replaces those
 modules; the audio, transcription, cleanup and UI layers above them are portable.
 
-See `CLAUDE.md` for the locked decisions and the failure modes not to reintroduce.
+See `CLAUDE.md` for the locked decisions and the failure modes not to reintroduce,
+and `NOTICE.md` for what is adapted from other projects.
+
+## Credits
+
+The comet's motion design is adapted from
+[Sotto](https://github.com/kingbootoshi/sotto) by kingbootoshi and contributors,
+MIT licensed. Sotto is the macOS counterpart to this idea and worth a look —
+their HTML design workbenches are an unusually honest record of how the motion
+and sound were chosen.

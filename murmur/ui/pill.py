@@ -45,6 +45,9 @@ REC_SIZE = (34, 150)
 TOGGLE_SIZE = (34, 208)
 WORK_SIZE = (34, 126)          # transcribing / cleaning up
 DONE_SIZE = (34, 92)
+# Contracted to a dot as the comet takes over, so the pill appears to
+# become the thing that flies rather than vanishing beside it.
+LAUNCH_SIZE = (16, 16)
 
 # Present enough to answer 'is Murmur running?' from the corner of your
 # eye, dim enough to ignore. Too faint and it is not an indicator at all.
@@ -62,11 +65,13 @@ ACCENT = {
     "copied": QColor("#4ADE80"),
     "cancelled": QColor("#EF4444"),
     "error": QColor("#EF4444"),
+    "launching": QColor("#4ADE80"),
 }
 
 ACTIVE = ("recording", "transcribing", "polishing")
 WORKING = ("transcribing", "polishing")
 TERMINAL = ("done", "copied", "cancelled", "error")
+HANDOFF = "launching"
 
 GWL_EXSTYLE = -20
 WS_EX_NOACTIVATE = 0x08000000
@@ -142,6 +147,22 @@ class Pill(QWidget):
             int(geo.center().y() - self.height() / 2),
         )
 
+    def capsule_centre(self):
+        """Centre of the drawn capsule in SCREEN coordinates.
+
+        The comet starts here, so it must be the capsule rather than the
+        window — the window is deliberately much larger to leave room for the
+        slide and shake.
+        """
+        from PySide6.QtCore import QPointF
+
+        w = max(3.0, self.width_s.value)
+        h = max(4.0, self.height_s.value)
+        local_x = self.width() - w - self.offset_px + self.slide.value + w / 2
+        local_y = self.height() / 2
+        top_left = self.mapToGlobal(self.rect().topLeft())
+        return QPointF(top_left.x() + local_x, top_left.y() + local_y)
+
     def _harden(self) -> None:
         """WS_EX_NOACTIVATE at the Win32 level. Qt's flags alone still allow the
         window to be activated in some cases, and an activated pill eats the paste."""
@@ -178,6 +199,8 @@ class Pill(QWidget):
             return TOGGLE_SIZE if self.mode == "toggle" else REC_SIZE
         if self.state in WORKING:
             return WORK_SIZE
+        if self.state == HANDOFF:
+            return LAUNCH_SIZE
         if self.state in TERMINAL:
             return DONE_SIZE
         return REC_SIZE
@@ -227,6 +250,10 @@ class Pill(QWidget):
         elif state in ACTIVE:
             self.opacity.target = 1.0
             self.check.target = 0.0
+        elif state == HANDOFF:
+            # Contract and fade: the comet picks the motion up from here.
+            self.check.snap_to(0.0)
+            self.opacity.target = 0.0
         elif state in ("done", "copied"):
             # Hold full opacity while the tick strokes itself on; _tick starts
             # the return to armed once it has actually been drawn.

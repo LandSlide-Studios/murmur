@@ -252,3 +252,33 @@ def test_glossary_terms_cannot_close_the_transcript_tag():
 def test_blank_glossary_terms_are_dropped():
     p = Polisher(enabled=True, model="x")
     assert p._messages("hi", glossary=["   ", ""])[0]["content"] == PROMPT
+
+
+def test_warm_uses_a_long_timeout_so_a_model_load_fits(monkeypatch):
+    """Ollama unloads an idle model. The first request pays the load cost, and
+    inside the normal timeout that showed up as a real dictation silently
+    falling back to the raw transcript."""
+    seen = {}
+
+    def capture(_messages, timeout_s=None):
+        seen["t"] = timeout_s
+        return "Warm up."
+
+    p = Polisher(enabled=True, model="x", timeout_s=4)
+    monkeypatch.setattr(p, "_call", capture)
+    assert p.warm() is True
+    assert seen["t"] >= 30, "a cold model load needs far more than the normal timeout"
+
+
+def test_warm_failure_is_not_fatal(monkeypatch):
+    p = Polisher(enabled=True, model="x")
+    monkeypatch.setattr(p, "_call",
+                        lambda *a, **k: (_ for _ in ()).throw(ConnectionRefusedError()))
+    assert p.warm() is False
+
+
+def test_warm_is_a_noop_when_polish_is_disabled(monkeypatch):
+    p = Polisher(enabled=False, model="x")
+    monkeypatch.setattr(p, "_call",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("called")))
+    assert p.warm() is False

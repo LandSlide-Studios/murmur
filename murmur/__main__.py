@@ -10,12 +10,13 @@ import logging
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import Q_ARG, QMetaObject, Qt, QTimer
+from PySide6.QtCore import QObject, QPointF, Qt, QTimer, Signal
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from .app import MurmurApp, data_dir
 from .config import Config
 from .platform.win import autostart, single_instance
+from .ui.comet import Comet
 from .ui.pill import Pill
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -48,11 +49,21 @@ def _configure_logging() -> None:
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
-class UiBridge:
-    """Marshals session state from worker threads onto the Qt thread."""
+class UiBridge(QObject):
+    """Marshals session state from worker threads onto the Qt thread.
 
-    def __init__(self, pill: Pill):
+    A Qt signal rather than invokeMethod, because the comet needs to carry a
+    screen coordinate across the thread boundary as well as a state name.
+    """
+
+    changed = Signal(str, str, int, int)
+
+    def __init__(self, pill: Pill, comet=None, injector=None):
+        super().__init__()
         self.pill = pill
+        self.comet = comet
+        self.injector = injector
+        self.changed.connect(self._on_changed, Qt.QueuedConnection)
 
     def __call__(self, state: str, **kw) -> None:
         if state == "level":
@@ -61,9 +72,39 @@ class UiBridge:
             # be pure overhead.
             self.pill.set_level(kw.get("level", 0.0))
             return
-        QMetaObject.invokeMethod(
-            self.pill, "apply_state", Qt.QueuedConnection,
-            Q_ARG(str, state), Q_ARG(str, kw.get("mode") or ""))
+        aim = kw.get("aim") or (-1, -1)
+        self.changed.emit(state, kw.get("mode") or "", int(aim[0]), int(aim[1]))
+
+    def _on_changed(self, state: str, mode: str, ax: int, ay: int) -> None:
+        """UI thread."""
+        if state == "flying" and self.comet is not None and ax >= 0:
+            self._fly(QPointF(float(ax), float(ay)))
+            return
+        if state == "flying":
+            # No comet available; deliver immediately rather than not at all.
+            if self.injector is not None:
+                self.injector.paste()
+            self.pill.apply_state("done", mode)
+            return
+        self.pill.apply_state(state, mode)
+
+    def _fly(self, aim: QPointF) -> None:
+        from murmur.ui.pill import ACCENT
+
+        start = self.pill.capsule_centre()
+        self.pill.apply_state("launching", "")
+
+        def landed():
+            # The keystroke fires the instant the comet arrives.
+            if self.injector is not None:
+                try:
+                    self.injector.paste()
+                except Exception:
+                    logging.getLogger("murmur").exception("paste on landing failed")
+            self.pill.apply_state("done", "")
+
+        self.comet.launch(start, aim,
+                          colour=ACCENT["done"].name(), on_land=landed)
 
 
 class ClipboardWatcher:
@@ -110,7 +151,10 @@ def main() -> int:
 
     pill = Pill(offset_px=cfg.get("ui.pill_offset_px"),
                 show_when_idle=cfg.get("ui.idle_indicator", True))
-    murmur = MurmurApp(cfg, on_state=UiBridge(pill))
+    comet = Comet() if cfg.get("ui.comet", True) else None
+    bridge = UiBridge(pill, comet=comet)
+    murmur = MurmurApp(cfg, on_state=bridge)
+    bridge.injector = murmur.injector
 
     try:
         murmur.start()

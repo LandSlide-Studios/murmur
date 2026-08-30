@@ -2,6 +2,51 @@
 
 Newest first. What shipped, what failed, and why.
 
+## 2026-08-29 (night) — the comet, adapted from Sotto
+
+Tommy found https://github.com/kingbootoshi/sotto and wanted its UI on Windows.
+
+**License first.** Sotto is MIT, same as Murmur, so adapting it is legal with
+attribution. Had it been GPL or unlicensed this would have stopped here — a
+public MIT repo cannot absorb either. `NOTICE.md` records what was taken.
+
+**What ports and what does not.** Sotto is Swift/AppKit/CoreAnimation on Apple
+Silicon, running Parakeet TDT on the Neural Engine. None of that code runs on
+Windows and none of it is used. What ports is the *motion design*, which is the
+part that took judgement, and their README plus `CometFlight.swift` state it
+exactly:
+
+- 110ms pull-back, 260ms flight
+- ease-out cubic, so it arrives rather than drifts
+- elongation peaking at mid-flight — this is what makes a moving dot read as a
+  comet rather than a sliding circle
+- ballistic: aimed at where the pointer was the instant you stopped talking,
+  never corrected
+
+That last one is the real insight. Chasing a live cursor would read as the
+animation following the user; not chasing reads as a delivery.
+
+**The paste now fires on impact.** `Injector` split into `copy()` and `paste()`,
+so the transcript reaches the clipboard before anything moves and the Ctrl+V
+fires exactly as the comet lands. The animation and the paste are one event
+rather than one decorating the other. If a modifier is stuck, `copy()` returns
+False and the pill says "copied" instead of flying — the text is never at risk.
+
+**Cost:** ~370ms between the transcript being ready and the text appearing. That
+is the feature, not a regression; `ui.comet` turns it off.
+
+**A false alarm worth recording.** Verification failed on "cleanup runs on
+localhost" twice. It was not a code defect — Ollama had exited. Diagnosed by
+running the polish call directly and reading `WinError 10061` rather than
+adjusting working code to make a red check go green.
+
+**Real fix found along the way:** `Polisher.warm()` now uses a 90s timeout. The
+old warm-up used the normal adaptive timeout, so a cold model load could fail
+the warm-up itself and leave the first real dictation cold — exactly what the
+17:33 log line showed.
+
+283 unit tests, 17/17 system checks.
+
 ## 2026-08-29 (evening) — vertical pill on the right bezel
 
 Tommy reported no running-indicator at all. **It was not a bug in the feature —

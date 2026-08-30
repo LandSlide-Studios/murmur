@@ -93,8 +93,27 @@ class Injector:
 
     # --- public ----------------------------------------------------------
 
+    def copy(self, text: str | None) -> bool:
+        """Put the text on the clipboard and clear the modifiers, WITHOUT
+        pasting. Returns False if a modifier is still physically held.
+
+        Split from the paste so an animation can run between the two: the
+        transcript is safely on the clipboard before anything moves, and the
+        keystroke fires the instant the comet lands.
+        """
+        if not text:
+            return False
+        released = self._release_modifiers()
+        self._set_clipboard(text)
+        return released
+
+    def paste(self) -> None:
+        """Send Ctrl+V. Assumes copy() already cleared the modifiers."""
+        self._send_paste()
+
     def inject(self, text: str | None) -> bool:
-        """Returns True if the text was pasted, False if it was only copied."""
+        """Copy and paste in one go. Returns True if the text was pasted,
+        False if it was only copied."""
         if not text:
             return False
 

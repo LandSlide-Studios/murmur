@@ -24,6 +24,12 @@ Rebuild of Wispr Flow's behaviour on a local-only stack. Tommy's own tool, not c
   it must invoke `run_murmur.pyw` by absolute path.
 - **Never substitute a whole component in `verify.py`.** The harness stubbed the
   Recorder and was blind to the worst defect in the app while reporting 15/15.
+- **Never change the comet's timings without reading NOTICE.md.** 110ms pull,
+  260ms flight, mid-flight stretch and a ballistic aim are adapted from Sotto
+  and are what make it read as a throw. The aim must never be re-read
+  mid-flight.
+- **The transcript reaches the clipboard BEFORE the comet flies.** A failed
+  animation must never be able to cost the user their words.
 - **Never do work inside the keyboard hook callback.** A `WH_KEYBOARD_LL` callback exceeding
   `LowLevelHooksTimeout` (~300ms) is silently unhooked by Windows and the hotkey dies with no
   error. The callback enqueues and returns. Nothing else.

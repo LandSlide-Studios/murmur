@@ -109,3 +109,39 @@ def test_set_clipboard_failure_is_raised_so_the_caller_can_react(monkeypatch):
         inj, "_send_paste", lambda: pytest.fail("must not paste a stale clipboard"))
     with pytest.raises(OSError):
         inj.inject("NEW")
+
+
+# --- split copy/paste, so the comet can fly between them ---
+
+def test_copy_puts_text_on_the_clipboard_without_pasting(monkeypatch):
+    order, clip = [], {"v": "OLD"}
+    inj = Injector(restore_previous=False, clipboard_settle_s=0)
+    _wire(inj, monkeypatch, clip, order)
+    assert inj.copy("NEW") is True
+    assert clip["v"] == "NEW"
+    assert "paste" not in order, "copy() must not send the keystroke"
+
+
+def test_copy_returns_false_when_a_modifier_is_stuck(monkeypatch):
+    clip = {"v": ""}
+    inj = Injector(restore_previous=False, clipboard_settle_s=0)
+    monkeypatch.setattr(inj, "_get_clipboard", lambda: clip["v"])
+    monkeypatch.setattr(inj, "_set_clipboard", lambda t: clip.__setitem__("v", t))
+    monkeypatch.setattr(inj, "_release_modifiers", lambda: False)
+    assert inj.copy("NEW") is False
+    assert clip["v"] == "NEW", "the text must reach the clipboard either way"
+
+
+def test_paste_sends_the_keystroke(monkeypatch):
+    order = []
+    inj = Injector(restore_previous=False)
+    monkeypatch.setattr(inj, "_send_paste", lambda: order.append("paste"))
+    inj.paste()
+    assert order == ["paste"]
+
+
+def test_copy_of_empty_text_is_a_no_op(monkeypatch):
+    inj = Injector(restore_previous=False)
+    monkeypatch.setattr(inj, "_release_modifiers",
+                        lambda: (_ for _ in ()).throw(AssertionError("touched")))
+    assert inj.copy("") is False

@@ -86,6 +86,24 @@ class Polisher:
         self.min_shrink_ratio = min_shrink_ratio
         self.url = url
 
+    def warm(self, timeout_s: float = 90.0) -> bool:
+        """One long-timeout request to force the model resident.
+
+        Ollama unloads an idle model, so the FIRST request after a gap pays the
+        load cost. Inside the normal adaptive timeout that surfaced as a real
+        dictation falling back to the raw transcript. This runs on a background
+        thread at startup, where a long wait costs the user nothing.
+        """
+        if not self.enabled:
+            return False
+        try:
+            self._call(self._messages("warm up", []), timeout_s=timeout_s)
+            log.info("cleanup model ready")
+            return True
+        except Exception as e:
+            log.info("cleanup model warm-up failed (it will load on demand): %s", e)
+            return False
+
     def _timeout_for(self, raw: str) -> float:
         return min(
             _TIMEOUT_MAX_S,
