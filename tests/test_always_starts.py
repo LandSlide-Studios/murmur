@@ -50,14 +50,27 @@ def test_a_scalar_shadowing_a_section_does_not_delete_it(
     ('{"learning": {"promote_after_hits": 0}}', "learning.promote_after_hits"),
     ('{"audio": {"silence_stop_seconds": Infinity}}', "audio.silence_stop_seconds"),
 ])
-def test_an_impossible_value_is_replaced_by_its_default(tmp_path, body, dotted):
+def test_an_impossible_value_is_made_usable(tmp_path, body, dotted):
     """Type alone is not enough: zero, negative and NaN are all the right type
     and all break a consumer silently. A NaN speech threshold makes every
-    comparison false, so the app never hears anything at all."""
+    comparison false, so the app never hears anything at all.
+
+    An out-of-range value is CLAMPED to the declared bound rather than reverted
+    to the default: declaring a range asserts its ends are supported, so someone
+    asking for 7200s of silence tolerance meant "stop bothering me", and sending
+    them back to 90s moved the setting 80x in the direction that cuts a session
+    off mid-sentence. A non-finite value has no nearest bound, so it reverts.
+    """
+    import math
+
+    from murmur.config import _RANGES
+
     cfg = Config.load(written(tmp_path, "s.json", body))
     value = cfg.get(dotted)
-    assert isinstance(value, (int, float))
-    assert value == Config.load(tmp_path / "missing.json").get(dotted)
+    assert isinstance(value, (int, float)) and not isinstance(value, bool)
+    assert math.isfinite(value)
+    low, high = _RANGES[dotted]
+    assert low <= value <= high
 
 
 def test_a_legitimate_override_survives_validation(tmp_path):

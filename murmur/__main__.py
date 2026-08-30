@@ -84,9 +84,12 @@ class UiBridge(QObject):
             return
         if state == "flying":
             # No comet available; deliver immediately rather than not at all.
-            if self.injector is not None:
-                self.injector.paste()
-            self.pill.apply_state("done", mode)
+            # The return value is the ONLY signal that the text was not
+            # delivered. Discarding it painted "done" over a refused paste, and
+            # done and copied render identically -- so a stranded transcript
+            # looked exactly like a successful one.
+            pasted = self.injector.paste() if self.injector is not None else False
+            self.pill.apply_state("done" if pasted else "copied", mode)
             return
         self.pill.apply_state(state, mode)
 
@@ -100,12 +103,16 @@ class UiBridge(QObject):
             # The keystroke and the splash fire the instant the comet arrives.
             if self.sounds is not None:
                 self.sounds.play("arrive")
+            pasted = False
             if self.injector is not None:
                 try:
-                    self.injector.paste()
+                    pasted = self.injector.paste()
                 except Exception:
                     logging.getLogger("murmur").exception("paste on landing failed")
-            self.pill.apply_state("done", "")
+            # "done" and "copied" paint identically; the hold is the only
+            # difference. Painting "done" over a refused paste made a stranded
+            # transcript look exactly like a delivered one.
+            self.pill.apply_state("done" if pasted else "copied", "")
 
         self.comet.launch(start, aim,
                           colour=ACCENT["done"].name(), on_land=landed)

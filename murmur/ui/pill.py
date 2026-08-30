@@ -22,6 +22,7 @@ state change that interrupts another blends instead of snapping.
 """
 
 import ctypes
+import logging
 import math
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal, Slot
@@ -31,6 +32,8 @@ from PySide6.QtWidgets import QWidget
 
 from .motion import Spring
 from .waveform import BarModel
+
+log = logging.getLogger(__name__)
 
 # Packed tight: the bars nearly touch, so the row reads as one waveform rather
 # than a row of separate ticks.
@@ -93,7 +96,12 @@ class Pill(QWidget):
                  parent=None):
         super().__init__(
             parent,
-            Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool,
+            Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool
+            # WS_EX_NOACTIVATE blocks activation by CLICK; it does not
+            # block a direct foreground request, and if this window ever
+            # takes focus the paste lands in it instead of the user's
+            # editor. This flag refuses focus outright.
+            | Qt.WindowDoesNotAcceptFocus,
         )
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
@@ -129,6 +137,11 @@ class Pill(QWidget):
         # _set_click_through(True) is a no-op against an unset attribute.
         self._click_through = True
         self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        # The native bit as well as the Qt attribute. `_set_click_through`
+        # early-returns when the value is unchanged, and this starts True -- so
+        # WS_EX_TRANSPARENT was never applied until something first turned
+        # click-through OFF, which only a hands-free recording does.
+        self._want_transparent_style = True
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
@@ -174,7 +187,14 @@ class Pill(QWidget):
         user's app."""
         if self._hardened:
             return
-        self._ex_style(add=WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW)
+        add = WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW
+        if self._click_through:
+            # `_set_click_through` early-returns when the value is unchanged and
+            # this starts True, so the native bit was never applied until
+            # something first turned click-through OFF -- which only a
+            # hands-free recording ever does.
+            add |= WS_EX_TRANSPARENT
+        self._ex_style(add=add)
         self._hardened = True
 
     def _set_click_through(self, through: bool) -> None:
@@ -285,9 +305,20 @@ class Pill(QWidget):
         self.width_s.target = float(w)
         self.height_s.target = float(h)
 
+    KNOWN_STATES = ("off", "armed", "recording", "transcribing", "polishing",
+                    "done", "copied", "cancelled", "error", "launching")
+
     def set_state(self, state: str, mode: str | None = None) -> None:
         if state == "idle":
             state = "armed" if self.show_when_idle else "off"
+        if state not in self.KNOWN_STATES:
+            # It used to fall through every branch to a default that sets full
+            # opacity, and was in no terminal list, so nothing ever timed it
+            # out: the overlay stayed lit forever with the timer running. A
+            # producer typo, or a new state added without updating the terminal
+            # list, was enough.
+            log.warning("pill: unknown state %r; treating as error", state)
+            state = "error"
         if mode:
             self.mode = mode
         if state == self.state:
@@ -305,6 +336,11 @@ class Pill(QWidget):
         if state == "off":
             self.opacity.target = 0.0
             return
+
+        # Unconditionally: this used to sit inside the not-yet-visible branch,
+        # so a pill already on screen when its first state arrived never got
+        # WS_EX_NOACTIVATE at all. It is idempotent.
+        self._harden()
 
         if not self.isVisible():
             self.opacity.snap_to(0.0)

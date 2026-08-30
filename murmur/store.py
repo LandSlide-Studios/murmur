@@ -31,10 +31,55 @@ def open_store(path: Path, schema: str) -> sqlite3.Connection:
     try:
         return _connect(path, schema)
     except sqlite3.Error as e:
+        if _is_readable(path):
+            # The file is FINE; the schema script is what failed. This is the
+            # difference between "damaged" and "a different shape", and getting
+            # it wrong here destroys data rather than saving it.
+            #
+            # `CREATE TABLE IF NOT EXISTS` no-ops against an existing table, so
+            # an older column set survives a schema bump untouched -- and the
+            # next `CREATE INDEX ... ON sessions(ts)` then raises "no such
+            # column". Quarantining on that would displace every existing
+            # user's history the first time a column is ever added.
+            log.error("store at %s is intact but its schema did not apply (%s); "
+                      "keeping the file and continuing without the change",
+                      path, e)
+            return _connect_without_schema(path)
         quarantined = _quarantine(path, e)
         if quarantined is None:
             raise
     return _connect(path, schema)
+
+
+def _is_readable(path: Path) -> bool:
+    """Whether SQLite considers this file a healthy database.
+
+    Deliberately conservative: anything that stops us answering the question --
+    including a lock held by another process -- counts as NOT damaged, because
+    the only action gated on a False here is moving the user's data aside.
+    """
+    conn = None
+    try:
+        conn = sqlite3.connect(str(path), check_same_thread=False)
+        return conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    except sqlite3.DatabaseError as e:
+        # "database is locked" says nothing about the file's health, and the
+        # rename only failed on Windows by luck of the sharing flags.
+        return "locked" in str(e).lower() or "busy" in str(e).lower()
+    except Exception:
+        return True
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def _connect_without_schema(path: Path) -> sqlite3.Connection:
+    conn = sqlite3.connect(str(path), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 
 def _connect(path: Path, schema: str) -> sqlite3.Connection:

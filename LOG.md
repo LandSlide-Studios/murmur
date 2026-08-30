@@ -988,3 +988,86 @@ row count logged at startup, so growth is visible rather than merely
 undocumented. *The number, if he wants one, is his to pick.*
 
 491 tests, 17/17 checks.
+
+## 2026-08-30 - remediation tier 6, and what the gates found in the fixes
+
+Tier 6 landed as one sweep: the overlay refuses focus outright rather than
+relying on WS_EX_NOACTIVATE (which blocks activation by click but not a direct
+foreground request); the native click-through bit is applied at harden time
+rather than only on a change; an unrecognised state is treated as terminal
+instead of wedging the overlay lit forever; hardening runs whether or not the
+window is already visible; a non-finite spring target is refused at the setter
+rather than poisoning the integrator permanently; control characters are
+stripped at the injector as well as at the cleanup pass; a non-text previous
+clipboard is no longer "restored" as an empty string over the transcript;
+settings saves retry the rename and hold a lock across the diff walk; a lost
+key-up no longer leaves a phantom chord; `mute_for` extends rather than assigns;
+a float sample rate no longer dies inside `np.zeros`; and the worker's
+last-resort handler guards its own callback.
+
+**And the wiring that was missing all along.** `wants_other_keys()` was added to
+the FSM in an earlier pass and never connected to the hook, so the Ctrl+Win+D
+guard -- first "fixed" this morning -- was STILL not reaching production. It is
+wired now, and pinned by a test that drives the real hook callback rather than
+the FSM directly. That test layer is the one that was missing for the guard's
+entire life.
+
+### What the gates found in the remediation itself
+
+Four air-gapped reviewers, each seeing only the changed modules and a list of
+claims, with no access to this log, CLAUDE.md, REMEDIATION.md or any test. They
+found **nine real defects in the fixes**, several worse than what they replaced.
+Every one was re-verified here before being changed.
+
+**The quarantine would have destroyed healthy data.** `CREATE TABLE IF NOT
+EXISTS` no-ops against an existing table, so an older column set survives a
+schema bump -- and the next `CREATE INDEX ... ON sessions(ts)` raises "no such
+column". A healthy, integrity-clean 500-row database was displaced. Any future
+column added to `sessions` would have turned every existing user's history into
+a `.corrupt-*` file on their next launch. A safety feature that was a data-loss
+feature. Now gated on `PRAGMA integrity_check`, with a lock treated as "not
+damaged" -- because the only action it gates is moving the user's data aside.
+
+**The supervision fix moved the bug rather than removing it.** Excluding
+already-counted entries *before* choosing the best match meant a repeated offer
+was merely barred from the entry it had used and fell through to the next one,
+which yielded the same pair, promoted it on a single user action after all, and
+invented a rule from an unrelated paste on the way. Now deduplicated by EVENT:
+the same clipboard text with nothing newly watched in between is the same user
+action, however many times it is offered.
+
+**The post-clipboard cancel guard was inert.** `_unpend` ran before the copy, so
+once unpended `_cancel_session` could not find the session and the guard could
+never fire from any real route. Written, tested, committed, and doing nothing.
+
+**The case rule never saw punctuation.** Splitting on whitespace left the comma
+attached, so `us,` was not in the stop-list and was trusted instantly --
+rewriting the pronoun in every later punctuated transcript. Transcripts are
+punctuated, so that was the common form of the edit, not an edge case. Adjacent
+changed words (`it was` -> `IT WAS`) slipped past the same way. And `may`/`will`
+were in the list, costing the month and the name their instant trust.
+
+**The injector lock stalled the UI thread and could never close its own window.**
+`copy()` held it across a 500ms wait for a physically-held key, and `paste()` on
+the Qt thread waited behind that. Worse, the lock is released between copy and
+paste by design -- so it never closed the window it was added for: one click on
+Copy in the history panel would paste a history row into the document instead of
+the dictation. Replaced with a content check at paste time, and the modifier
+wait moved outside the lock. `paste()` also refused for Shift and Alt, which are
+the user typing, not the documented Ctrl+Win+V hazard.
+
+**A refused paste was painted as success.** `paste()`'s new return value was
+discarded at both call sites, and the receipt logged "pasted" ~370ms before the
+keystroke fired -- reintroducing exactly the undiagnosable "it does not send
+sometimes" the receipt exists to prevent.
+
+**The aim fallback could only ever be wrong.** `session.aim or self._aim` -- and
+`session.aim` is None precisely when the cursor could not be read, at which
+instant the shared slot was set to None too. It could never hold this session's
+cursor, only a later one's, which is the bug it replaced.
+
+**Out-of-range settings reverted instead of clamping.** Asking for 7200s of
+silence tolerance got 90s -- 80x in the direction that cuts a session off
+mid-sentence. Declaring a range asserts that its ends are supported.
+
+529 tests, 17/17 checks.

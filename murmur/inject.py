@@ -56,6 +56,9 @@ class Injector:
         # the seam the modifier re-check and the clipboard guards belong
         # inside, so they cannot race the thing they guard.
         self._lock = threading.RLock()
+        # What copy() last put on the clipboard, so paste() can tell whether
+        # anything overwrote it in between.
+        self._staged: str | None = None
 
     # --- clipboard -------------------------------------------------------
 
@@ -64,10 +67,19 @@ class Injector:
 
         return pyperclip.paste()
 
+    # C0 controls except tab and newline. NUL is the dangerous one: the Win32
+    # clipboard sizes its buffer with a string length that stops at the first
+    # NUL, so everything after it is dropped with no error anywhere -- content
+    # loss that presents as success. The cleanup pass strips these too, but a
+    # raw transcript bypasses cleanup on every fallback path.
+    _CONTROLS = "".join(chr(c) for c in
+                        [*range(0, 9), 11, 12, *range(14, 32), 127])
+    _CONTROL_MAP = str.maketrans("", "", _CONTROLS)
+
     def _set_clipboard(self, text: str) -> None:
         import pyperclip
 
-        pyperclip.copy(text)
+        pyperclip.copy(text.translate(self._CONTROL_MAP))
 
     # --- keyboard --------------------------------------------------------
 
@@ -106,6 +118,15 @@ class Injector:
                     self.release_timeout_s * 1000)
         return False
 
+    def _paste_blocking_modifiers(self) -> bool:
+        """Whether a modifier is down that would corrupt Ctrl+V into something
+        else. Checked, never forced: this runs mid-animation on the UI thread."""
+        try:
+            return any(user32.GetAsyncKeyState(vk) & _HELD
+                       for vk in (VK_CONTROL, VK_LWIN, VK_RWIN))
+        except Exception:
+            return False
+
     def _send_paste(self) -> None:
         user32.keybd_event(VK_CONTROL, 0, 0, 0)
         user32.keybd_event(VK_V, 0, 0, 0)
@@ -124,10 +145,16 @@ class Injector:
         """
         if not text:
             return False
+        # The modifier spin is OUTSIDE the lock. It waits up to
+        # release_timeout_s for a physically-held key, and holding the lock
+        # across it stalled the UI thread's paste() for half a second on the
+        # ordinary hold-to-talk path -- a new block on a thread that is not
+        # supposed to block at all.
+        released = self._release_modifiers()
         with self._lock:
-            released = self._release_modifiers()
             self._set_clipboard(text)
-            return released
+            self._staged = text
+        return released
 
     def paste(self) -> bool:
         """Send Ctrl+V. Returns False if a modifier was still held.
@@ -138,12 +165,34 @@ class Injector:
         Clipboard History instead of pasting. The text is already on the
         clipboard, so refusing costs nothing.
         """
+        # Only the modifiers that actually break a paste, and only a single
+        # sample -- no spin. This runs on the UI thread when the comet lands,
+        # and waiting half a second there freezes the animation it is part of.
+        # The documented hazard is Ctrl+Win+V opening Clipboard History; Shift
+        # or Alt being down is the user typing again, and forcing those up would
+        # break their selection to no purpose.
+        if self._paste_blocking_modifiers():
+            log.warning("Ctrl or Win still held at paste time; leaving the "
+                        "text on the clipboard")
+            return False
         with self._lock:
-            if not self._release_modifiers():
-                log.warning("modifiers held at paste time; leaving the text "
-                            "on the clipboard")
-                return False
+            # copy() and paste() are deliberately split so the animation can run
+            # between them, and the lock is released in that gap -- so a lock
+            # alone never closed this window. Anything can write the clipboard
+            # in it: a second dictation, or one click on Copy in the history
+            # panel, which would otherwise paste a history row into the user's
+            # document instead of the dictation.
+            staged = self._staged
+            if staged is not None:
+                try:
+                    if self._get_clipboard() != staged:
+                        log.info("clipboard changed since the transcript was "
+                                 "staged; restoring it before pasting")
+                        self._set_clipboard(staged)
+                except Exception:
+                    log.debug("could not verify the clipboard", exc_info=True)
             self._send_paste()
+            self._staged = None
             return True
 
     def inject(self, text: str | None) -> bool:
@@ -163,6 +212,12 @@ class Injector:
                 # Losing the old clipboard is acceptable. Losing the dictation
                 # is not, so this must never abort the paste.
                 log.warning("could not read previous clipboard: %s", e)
+            if not previous:
+                # An image or a file list on the clipboard reads back as an
+                # empty string, and the restore then wrote that empty string
+                # OVER the transcript -- costing the user the one thing that
+                # was still recoverable. The image was unrecoverable either way.
+                previous = None
 
         released = self._release_modifiers()
 

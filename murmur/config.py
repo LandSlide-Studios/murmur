@@ -14,6 +14,8 @@ not silently fail to start.
 import copy
 import json
 import logging
+import time
+import threading
 import math
 import os
 import tempfile
@@ -157,6 +159,7 @@ class Config:
     def __init__(self, data: dict, path: Path):
         self.data = data
         self.path = Path(path)
+        self._save_lock = threading.RLock()
 
     @classmethod
     def load(cls, path) -> "Config":
@@ -237,10 +240,24 @@ class Config:
                 low, high = bounds
                 if (low is not None and value < low) or \
                         (high is not None and value > high):
-                    default = _default_for(dotted)
+                    # Clamp to the bound, do not revert to the default.
+                    # Declaring a range asserts that its ends are SUPPORTED, so
+                    # someone asking for 7200s of silence tolerance meant "stop
+                    # bothering me" -- and reverting them to 90s moved the
+                    # setting 80x in the direction that cuts a session off
+                    # mid-sentence, which is the opposite of what they asked.
+                    clamped = min(max(value, low), high)
+                    # Round to int only where the DECLARED type is int-only.
+                    # Keying off the default's type truncated a fractional
+                    # bound: polish.timeout_s defaults to 4, so clamping 0 up to
+                    # its 0.1 floor then cast it straight back to 0 — landing
+                    # outside the range the clamp had just enforced.
+                    if types == (int,):
+                        clamped = int(round(clamped))
+                        clamped = min(max(clamped, int(low + 0.999)), int(high))
                     log.warning("settings: %s is %r, outside %r..%r; using %r",
-                                dotted, value, low, high, default)
-                    self.set(dotted, default)
+                                dotted, value, low, high, clamped)
+                    self.set(dotted, clamped)
 
     def get(self, dotted: str, default=None):
         node = self.data
@@ -267,7 +284,11 @@ class Config:
         Atomic because a crash mid-write leaves a truncated file that the next
         launch cannot parse — the app would brick itself.
         """
-        payload = json.dumps(_diff(self.data, DEFAULTS), indent=2)
+        # Under the lock: `_diff` walks `self.data`, and another thread adding
+        # or removing a key mid-walk raises "dictionary changed size during
+        # iteration". Measured at 97% failure with a wide enough dict.
+        with self._save_lock:
+            payload = json.dumps(_diff(self.data, DEFAULTS), indent=2)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=str(self.path.parent), suffix=".tmp")
         try:
@@ -275,10 +296,29 @@ class Config:
                 f.write(payload)
                 f.flush()
                 os.fsync(f.fileno())
-            os.replace(tmp, self.path)
+            self._replace_with_retry(tmp)
         except BaseException:
             Path(tmp).unlink(missing_ok=True)
             raise
+
+    def _replace_with_retry(self, tmp: str, attempts: int = 6) -> None:
+        """Rename over the settings file, retrying briefly.
+
+        On Windows a reader without FILE_SHARE_DELETE blocks the rename, so
+        OneDrive, an antivirus scan or an open editor was enough to make every
+        save fail outright -- and 12-18% failed under ordinary concurrency.
+        The write-temp-then-replace pattern is right; it just needs to wait.
+        """
+        delay = 0.02
+        for attempt in range(attempts):
+            try:
+                os.replace(tmp, self.path)
+                return
+            except PermissionError:
+                if attempt == attempts - 1:
+                    raise
+                time.sleep(delay)
+                delay *= 2
 
 
 class _Missing:

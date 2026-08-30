@@ -1,0 +1,59 @@
+fix(tier 6 + gates): hardening sweep, and nine defects the gates found in the fixes
+
+Tier 6: the overlay refuses focus outright rather than relying on
+WS_EX_NOACTIVATE, which blocks activation by click but not a foreground
+request; the click-through bit is applied at harden time; an unknown state is
+terminal instead of wedging the overlay lit forever; hardening runs even when
+the window is already visible; a non-finite spring target is refused at the
+setter; control characters are stripped at the injector as well as at cleanup;
+a non-text clipboard is no longer restored as an empty string over the
+transcript; settings saves retry the rename and lock the diff walk; a lost
+key-up no longer leaves a phantom chord; mute_for extends rather than assigns;
+a float sample rate no longer dies inside np.zeros; and the worker's
+last-resort handler guards its own callback.
+
+And the wiring that was missing all along: wants_other_keys() was added to the
+FSM in an earlier pass and never connected to the hook, so the Ctrl+Win+D guard
+STILL was not reaching production. Wired now, and pinned by a test that drives
+the real hook callback rather than the state machine directly. That test layer
+is the one that was missing for the guard's entire life.
+
+Four air-gapped gate reviewers, each seeing only the changed modules and a list
+of claims, found nine real defects in the fixes:
+
+- The store quarantine would have destroyed healthy data. CREATE TABLE IF NOT
+  EXISTS no-ops against an older shape, the index then raises on a missing
+  column, and a healthy integrity-clean 500-row database was displaced. Any
+  future column added to sessions would have turned every existing user's
+  history into a .corrupt file on their next launch. Now gated on
+  PRAGMA integrity_check, with a lock treated as not-damaged.
+
+- The supervision fix moved the bug rather than removing it. Excluding counted
+  entries before choosing the best match meant a repeated offer was barred from
+  the entry it had used and fell through to the next, which yielded the same
+  pair and promoted it on one user action anyway. Now deduplicated by event.
+
+- The post-clipboard cancel guard was inert. _unpend ran before the copy, so
+  once unpended no cancel could reach the session and the guard could never
+  fire. Written, tested, committed, and doing nothing.
+
+- The case rule never saw punctuation. Splitting on whitespace left the comma
+  attached, so us, was not in the stop-list and was trusted instantly. And
+  transcripts are punctuated, so that was the common form of the edit. may and
+  will were also in the list, costing the month and the name their trust.
+
+- The injector lock stalled the UI thread for 500ms and could never close its
+  own window, because the lock is released between copy and paste by design.
+  One click on Copy in the history panel would paste a history row into the
+  document instead of the dictation. Replaced with a content check at paste
+  time. paste() also refused for Shift and Alt, which are the user typing.
+
+- A refused paste was painted as success at both call sites, and the receipt
+  claimed "pasted" 370ms before the keystroke fired.
+
+- The aim fallback could only ever borrow a later session's cursor.
+
+- Out-of-range settings reverted to the default instead of clamping to the
+  bound, moving a setting 80x in the direction that cuts a session short.
+
+529 tests, 17/17 checks.

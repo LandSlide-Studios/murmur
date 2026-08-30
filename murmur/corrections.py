@@ -61,6 +61,15 @@ class Corrections:
         # Appended from the worker thread, rebuilt on the UI thread.
         self._lock = threading.Lock()
         self._pending: list[dict] = []
+        # Together with the clipboard text these identify one EVENT. Keying
+        # dedup on the pending ENTRY was not enough: a repeated offer was
+        # merely barred from the entry it had already used and fell through
+        # to the next one, which yielded the same pair -- promoting it on a
+        # single user action after all, and inventing a second rule from an
+        # unrelated pending paste on the way. The fix moved the bug rather
+        # than removing it; this removes it.
+        self._watches = 0
+        self._last_event = None
 
     # --- path A -----------------------------------------------------------
 
@@ -90,6 +99,7 @@ class Corrections:
             except Exception:
                 log.debug("UIA snapshot failed", exc_info=True)
         with self._lock:
+            self._watches += 1
             self._pending.append(
                 {"id": row_id, "text": injected, "t": time.time(), "snap": snap,
                  # Observations already counted for this entry. The `read`
@@ -161,6 +171,13 @@ class Corrections:
         # afterwards silently dropped a genuine second sighting: two identical
         # pastes tie on score, the first always wins, and it is the one already
         # counted -- so a real correction offered twice never promoted.
+        # One event, one opportunity. A repeat of the same clipboard text with
+        # nothing newly watched in between is the same user action, however many
+        # times it is offered.
+        event = (clean, self._watches)
+        if event == self._last_event:
+            return 0
+
         best, best_ratio = None, 0.0
         for p in pending:
             if clean in p["counted"]:
@@ -172,4 +189,5 @@ class Corrections:
         if best is None:
             return 0
         best["counted"].add(clean)
+        self._last_event = event
         return self.learn_from_auto(best["text"], clip_text)

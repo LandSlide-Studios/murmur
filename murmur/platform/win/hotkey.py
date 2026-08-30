@@ -75,6 +75,24 @@ class HotkeyListener:
         self._ready = threading.Event()
         self._error: BaseException | None = None
 
+    def _resync_modifiers(self) -> None:
+        """Drop any modifier the FSM thinks is held that the OS says is not.
+
+        The virtual-key codes come from VK_MAP rather than a second hand-written
+        list, so a key added there is covered here automatically and the two
+        cannot drift apart.
+        """
+        try:
+            for name in ("ctrl", "win"):
+                if name not in self.fsm.held:
+                    continue
+                vks = [vk for vk, n in VK_MAP.items() if n == name]
+                if not any(user32.GetAsyncKeyState(vk) & 0x8000 for vk in vks):
+                    log.debug("resync: %s was held in the FSM but is not down", name)
+                    self.fsm.held.discard(name)
+        except Exception:
+            log.debug("modifier resync failed", exc_info=True)
+
     def _ms(self) -> int:
         return int((time.perf_counter() - self._t0) * 1000)
 
@@ -91,9 +109,29 @@ class HotkeyListener:
 
             key = VK_MAP.get(kb.vkCode)
             if key is None:
-                return user32.CallNextHookEx(None, nCode, wParam, lParam)
+                # A key outside the chord still MATTERS during a push-to-talk
+                # hold: Ctrl+Win is the prefix of Ctrl+Win+D, Ctrl+Win+arrow and
+                # Ctrl+Win+F, and the FSM discards a hold that one of them joins.
+                #
+                # That discard branch existed and was unreachable, because this
+                # filter dropped every such key before `feed` ever saw it. The
+                # guard shipped, passed its own tests -- which drove the FSM
+                # directly -- and never executed once in production.
+                #
+                # Asking the FSM keeps the cost off the common path: while idle
+                # this is one attribute check per keystroke, not an FSM step.
+                if not self.fsm.wants_other_keys():
+                    return user32.CallNextHookEx(None, nCode, wParam, lParam)
+                key = "other"
 
             kind = "down" if wParam in (WM_KEYDOWN, WM_SYSKEYDOWN) else "up"
+
+            # Reconcile against what the OS actually reports before deciding.
+            # A key-up can be eaten by focus theft, a UAC prompt or an RDP
+            # session, and the FSM then believes that modifier is held forever
+            # -- so a single later press of the OTHER modifier starts a session
+            # on its own.
+            self._resync_modifiers()
             suppress = self.fsm.should_suppress(kind, key)
             for act in self.fsm.feed(Ev(kind, key, self._ms())):
                 self.actions.put(act)      # never do work inline

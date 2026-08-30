@@ -10,7 +10,8 @@ _MAX_DT = 1 / 30.0          # a stalled frame must not integrate to infinity
 
 
 class Spring:
-    __slots__ = ("value", "velocity", "target", "stiffness", "damping", "epsilon")
+    __slots__ = ("value", "velocity", "_target", "stiffness", "damping",
+                 "epsilon")
 
     def __init__(
         self,
@@ -21,10 +22,28 @@ class Spring:
     ):
         self.value = value
         self.velocity = 0.0
-        self.target = value
+        self._target = value
         self.stiffness = stiffness
         self.damping = damping
         self.epsilon = epsilon
+
+    @property
+    def target(self) -> float:
+        return self._target
+
+    @target.setter
+    def target(self, value: float) -> None:
+        """Refuse a non-finite target.
+
+        One NaN written here used to be permanent: the integrator carried it
+        into `value` and `velocity`, retargeting to a real number never restored
+        them, and `at_rest` was False forever -- so the overlay's hide condition
+        could never fire and the comet raised outright on the next launch.
+        """
+        v = float(value)
+        if v != v or v in (float("inf"), float("-inf")):
+            return
+        self._target = v
 
     def step(self, dt: float) -> float:
         dt = min(dt, _MAX_DT)

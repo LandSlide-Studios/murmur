@@ -53,6 +53,7 @@ class Comet(QWidget):
             Qt.FramelessWindowHint
             | Qt.WindowStaysOnTopHint
             | Qt.Tool
+            | Qt.WindowDoesNotAcceptFocus
             | Qt.WindowTransparentForInput,
         )
         self.setAttribute(Qt.WA_TranslucentBackground)

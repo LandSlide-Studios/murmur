@@ -126,9 +126,6 @@ class MurmurApp:
         self._inflight: Session | None = None
         self._seq = 0
         self._last_level_t: float | None = None
-        # Kept only so a session started before this field existed still has
-        # somewhere to read from; the live value belongs to the Session.
-        self._aim: tuple[int, int] | None = None
         self._handlers = {
             Act.START_HOLD: lambda: self._start("hold"),
             Act.PROMOTE_TOGGLE: self._promote,
@@ -306,7 +303,7 @@ class MurmurApp:
             pcm = self.recorder.end()
         # Where the mouse is NOW. The comet is ballistic: it flies to where you
         # were when you stopped talking, not to wherever the cursor drifts to.
-        session.aim = self._aim = self._cursor_point()
+        session.aim = self._cursor_point()
         dur_ms = int(len(pcm) / self.cfg.get("audio.sample_rate") * 1000)
         self.on_state("transcribing")
         self._cue("charge")
@@ -420,7 +417,16 @@ class MurmurApp:
                 # _process handles its own failures; this is the last resort so
                 # one bad session cannot kill the worker thread for good.
                 log.exception("worker loop error")
-                self.on_state("error")
+                try:
+                    # ...which it could, because THIS call was unguarded.
+                    # `on_state` is foreign UI code, and a Qt callback into a
+                    # deleted object raises -- escaping the loop and ending the
+                    # thread. Every dictation after that was queued and never
+                    # processed: no paste, no history row, no error, and the
+                    # pill still reading "transcribing".
+                    self.on_state("error")
+                except Exception:
+                    log.exception("the error handler itself failed")
             finally:
                 self._inflight = None
                 self._unpend(session)
@@ -469,14 +475,11 @@ class MurmurApp:
                     polished = self.polisher.polish(
                         raw, glossary=self.vocab.glossary())
                     final = self.vocab.apply(polished)
-                    # Past this point the text reaches the clipboard, so Esc
-                    # can no longer take it back -- and must not mark a
-                    # delivered session cancelled in the history.
-                    self._unpend(session)
                     if session.cancelled:
                         status = "cancelled"
                     elif not self.cfg.get("ui.comet", True):
                         pasted = self.injector.inject(final)
+                        self._unpend(session)
                         self._cue("done")
                         self._receipt(mode, final,
                                       "pasted" if pasted else "clipboard only")
@@ -486,6 +489,11 @@ class MurmurApp:
                         # moves, so a failed animation can never cost the user
                         # their words.
                         released = self.injector.copy(final)
+                        # Unpend HERE, not before the copy. Doing it first made
+                        # the guard below unreachable from any real cancel
+                        # route: once unpended, `_cancel_session` could not find
+                        # the session at all, so the fix was inert.
+                        self._unpend(session)
                         # The clipboard is not the document. Cancellation was
                         # checked once before this and never again, so an Esc
                         # landing in the window between the two was
@@ -498,9 +506,19 @@ class MurmurApp:
                             self.on_state("cancelled")
                         elif released:
                             self._cue("launch")
-                            self._receipt(mode, final, "pasted")
+                            # "staged" not "pasted": the keystroke fires ~370ms
+                            # later when the comet lands, and this line exists
+                            # precisely because "it does not send sometimes"
+                            # was undiagnosable. Claiming a paste that has not
+                            # happened yet puts the lie back in.
+                            self._receipt(mode, final, "staged for paste")
+                            # session.aim only, with no fallback. It is None
+                            # exactly when the cursor could not be read -- at
+                            # which instant the shared slot was set to None too,
+                            # so it can never hold THIS session's cursor. Only a
+                            # later session's, which is the bug this replaced.
                             self.on_state("flying", text=final,
-                                          aim=session.aim or self._aim)
+                                          aim=session.aim)
                         else:
                             self._cue("launch")
                             self._receipt(mode, final, "clipboard only "

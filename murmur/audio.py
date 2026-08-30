@@ -167,6 +167,10 @@ class Recorder:
         on_level=None,
         preroll_ms: int = DEFAULT_PREROLL_MS,
     ):
+        # int() because the pre-roll capacity was built with an explicit cast
+        # and the capture buffer's was not, so a float rate died inside
+        # np.zeros with an opaque TypeError.
+        sample_rate = int(sample_rate)
         self.sample_rate = sample_rate
         self.device = device
         self.on_level = on_level
@@ -240,7 +244,11 @@ class Recorder:
         The pre-roll is still muted, so the done and cancel cues of one session
         cannot leak into the next session's opening.
         """
-        self._muted_until = time.monotonic() + ms / 1000.0
+        # max, not assignment. A 10ms cue following a 500ms one used to cut
+        # the mute short by 490ms, so the tail of the first cue landed in the
+        # next session's pre-roll -- exactly what the mute exists to prevent.
+        self._muted_until = max(self._muted_until,
+                                time.monotonic() + ms / 1000.0)
 
     def end(self) -> np.ndarray:
         """Stop capturing and return the audio. Does NOT close the device."""

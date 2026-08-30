@@ -123,10 +123,31 @@ def test_paste_refuses_while_a_modifier_is_held():
     inj = Injector()
     sent = []
     inj._send_paste = lambda: sent.append(1)
-    inj._release_modifiers = lambda: False
+    inj._paste_blocking_modifiers = lambda: True
 
     assert inj.paste() is False
-    assert sent == [], "sent Ctrl+V with a modifier physically down"
+    assert sent == [], "sent Ctrl+V with Ctrl or Win physically down"
+
+
+def test_paste_does_not_refuse_for_a_harmless_modifier():
+    """The documented hazard is Ctrl+Win+V opening Clipboard History. Shift or
+    Alt being down is the user typing again — refusing there strands the
+    transcript, and forcing those keys up would break their selection."""
+    from murmur import inject as I
+
+    held = {I.VK_SHIFT, I.VK_MENU}
+
+    class FakeUser32:
+        def GetAsyncKeyState(self, vk):
+            return 0x8000 if vk in held else 0
+
+        def keybd_event(self, *a):
+            raise AssertionError("forced a modifier up during a paste")
+
+    inj = I.Injector()
+    import unittest.mock as mock
+    with mock.patch.object(I, "user32", FakeUser32()):
+        assert inj._paste_blocking_modifiers() is False
 
 
 def test_paste_proceeds_when_the_modifiers_are_clear():
@@ -135,7 +156,7 @@ def test_paste_proceeds_when_the_modifiers_are_clear():
     inj = Injector()
     sent = []
     inj._send_paste = lambda: sent.append(1)
-    inj._release_modifiers = lambda: True
+    inj._paste_blocking_modifiers = lambda: False
 
     assert inj.paste() is True
     assert sent == [1]

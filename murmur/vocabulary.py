@@ -82,6 +82,28 @@ why how all any both each few more most no nor now one only other own same some
 such too very just also even still back down over under again once here there
 """.split())
 
+# Deliberately NOT in the set above: "may" and "will", which are also the month
+# and the name. A word list can only ever approximate this, and those two were
+# costing an ordinary capitalisation its instant trust.
+_CASE_ONLY_NEEDS_PROOF = _CASE_ONLY_NEEDS_PROOF - {"may", "will"}
+
+_WORD_EDGES = " \t\n.,;:!?\"'()[]{}<>-–—/\\"
+
+
+def _all_words_need_proof(wrong: str) -> bool:
+    """Every word in the changed span is a common function word.
+
+    Splitting on whitespace alone meant the token was `us,` with its comma
+    attached, which is not in the set -- so one edit to "send it to us, then..."
+    was trusted instantly and rewrote the pronoun in every later punctuated
+    transcript. Transcripts are punctuated, so that is the COMMON form of the
+    edit, not an edge case. Adjacent changed words ("it was" -> "IT WAS") arrive
+    as one multi-word span and slipped past for the same reason.
+    """
+    words = [w.strip(_WORD_EDGES).casefold() for w in wrong.split()]
+    words = [w for w in words if w]
+    return bool(words) and all(w in _CASE_ONLY_NEEDS_PROOF for w in words)
+
 
 def _is_case_only(wrong: str, right: str) -> bool:
     return wrong != right and wrong.casefold() == right.casefold()
@@ -139,7 +161,7 @@ class Vocabulary:
             # pronoun everywhere; demoting it to the supervised path means it
             # still works, it just has to be seen twice.
             trusted = source == "manual" and not (
-                _is_case_only(wrong, right) and wrong.casefold() in _CASE_ONLY_NEEDS_PROOF)
+                _is_case_only(wrong, right) and _all_words_need_proof(wrong))
             promoted = 1 if (trusted or hits >= self.promote_after_hits) else 0
             self._conn.execute(
                 "INSERT INTO terms (wrong_form, term, hit_count, promoted,"
