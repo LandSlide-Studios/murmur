@@ -885,3 +885,33 @@ still win, so nothing existing changed.
 
 **Verified as regressions:** 9 of the 16 new tests fail against the stashed source.
 422 tests, 17/17 checks.
+
+## 2026-08-30 — remediation tier 3: it always starts, and always says why
+
+**14. `RecursionError` was not caught.** A settings file of deeply nested objects
+stopped the app starting. It is not a `ValueError`, so it fell through the load
+guard. The contract at the top of `config.py` is absolute; the fix is one
+exception class.
+
+**12. Type validation was not value validation.** Zero, negative and NaN are all
+the right type and all break a consumer silently — a NaN speech threshold makes
+every comparison false, so the app never hears anything. JSON also accepts the
+bare literals `NaN` and `Infinity`, and `1e400` parses to infinity, so all three
+arrive as floats and sail past an isinstance check. Added inclusive ranges and a
+finiteness check, both logged on repair.
+
+**11. A scalar shadowing a section silently deleted it.** `{"hotkeys": "ctrl+alt+q"}`
+replaced the whole branch, and repair only covered keys with a declared type —
+`hotkeys` and `stt` have none at all, so nothing was restored and **not one line
+was logged**. Murmur started with no hotkey and no way to find out why, which for
+a tray app with no console is indistinguishable from failing to start. Sections
+are now restored wholesale, with a warning naming what replaced them.
+
+**13. An unusable store was fatal at construction.** A half-written `history.db`
+after a power cut raised before the app was up. New `murmur/store.py` moves the
+bad file aside — stamped, so a second bad start does not overwrite the first
+casualty — starts a fresh one, and logs where the old went. Deleting it silently
+would have been a trade the user never got to make.
+
+**Verified as regressions:** 20 of the 35 new tests fail against the stashed source.
+457 tests, 17/17 checks.

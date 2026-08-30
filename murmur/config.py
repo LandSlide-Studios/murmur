@@ -14,6 +14,7 @@ not silently fail to start.
 import copy
 import json
 import logging
+import math
 import os
 import tempfile
 from pathlib import Path
@@ -68,6 +69,25 @@ DEFAULTS = {
 # Keys whose type matters downstream. A string where a number belongs does not
 # fail loudly — it silently disables the feature (a str timeout makes every
 # urlopen raise, which polish() catches, turning cleanup off forever).
+# Type alone is not enough. Zero, negative and NaN are all the right type and
+# all break a consumer silently -- a NaN speech threshold makes every comparison
+# false, so the app simply never hears anything. JSON also accepts the bare
+# literals NaN and Infinity, and 1e400 parses to inf, so all three arrive as
+# floats and sail past an isinstance check.
+#
+# (low, high) inclusive, or None for no bound on that side.
+_RANGES = {
+    "audio.silence_stop_seconds": (1.0, 3600.0),
+    "audio.min_session_ms": (0.0, 60_000.0),
+    "audio.sample_rate": (8_000, 192_000),
+    "audio.speech_rms_threshold": (1e-6, 1.0),
+    "polish.timeout_s": (0.1, 600.0),
+    "polish.max_growth_ratio": (1.0, 100.0),
+    "polish.min_shrink_ratio": (0.0, 1.0),
+    "learning.promote_after_hits": (1, 1000),
+    "ui.pill_offset_px": (0, 10_000),
+}
+
 _TYPES = {
     "audio.silence_stop_seconds": (int, float),
     "audio.min_session_ms": (int, float),
@@ -136,7 +156,12 @@ class Config:
         try:
             # utf-8-sig: Notepad writes a BOM, and plain utf-8 chokes on it.
             user = json.loads(path.read_text(encoding="utf-8-sig"))
-        except (json.JSONDecodeError, OSError, UnicodeDecodeError) as e:
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError,
+                RecursionError, ValueError) as e:
+            # RecursionError is not a ValueError and was not caught, so a file
+            # of deeply nested objects stopped the app starting outright. The
+            # contract at the top of this module is absolute: nothing here may
+            # raise on bad input.
             log.error("settings file unreadable (%s); using defaults: %s", path, e)
             return cls(copy.deepcopy(DEFAULTS), path)
         if not isinstance(user, dict):
@@ -146,9 +171,30 @@ class Config:
         cfg._validate()
         return cfg
 
+    def _repair_branches(self) -> None:
+        """Restore any section a scalar has replaced.
+
+        `{"hotkeys": "ctrl+alt+q"}` replaced the whole branch with a string, and
+        repair only covered keys with a declared type. `hotkeys` and `stt` have
+        none at all, so nothing was restored and NOT ONE LINE was logged: the
+        app started with no hotkey and no way to find out why. For a tray app
+        with no console that is indistinguishable from failing to start.
+        """
+        for section, default in DEFAULTS.items():
+            if not isinstance(default, dict):
+                continue
+            current = self.data.get(section, _MISSING)
+            if current is _MISSING or isinstance(current, dict):
+                continue
+            log.warning("settings: section %r was replaced by %r (%s); "
+                        "restoring the whole section",
+                        section, current, type(current).__name__)
+            self.data[section] = copy.deepcopy(default)
+
     def _validate(self) -> None:
-        """Revert any key whose type would break a consumer. Logs each revert
-        so a broken settings file is diagnosable from the log."""
+        """Revert any key whose type or value would break a consumer. Logs each
+        revert so a broken settings file is diagnosable from the log."""
+        self._repair_branches()
         for dotted, types in _TYPES.items():
             value = self.get(dotted, _MISSING)
             if value is _MISSING:
@@ -167,6 +213,24 @@ class Config:
                             dotted, value, type(value).__name__,
                             "/".join(t.__name__ for t in types), default)
                 self.set(dotted, default)
+                continue
+
+            if isinstance(value, float) and not math.isfinite(value):
+                default = _default_for(dotted)
+                log.warning("settings: %s is %r, which is not a finite number;"
+                            " using %r", dotted, value, default)
+                self.set(dotted, default)
+                continue
+
+            bounds = _RANGES.get(dotted)
+            if bounds is not None:
+                low, high = bounds
+                if (low is not None and value < low) or \
+                        (high is not None and value > high):
+                    default = _default_for(dotted)
+                    log.warning("settings: %s is %r, outside %r..%r; using %r",
+                                dotted, value, low, high, default)
+                    self.set(dotted, default)
 
     def get(self, dotted: str, default=None):
         node = self.data

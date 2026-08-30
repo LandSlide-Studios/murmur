@@ -15,6 +15,8 @@ import threading
 import time
 from pathlib import Path
 
+from .store import open_store
+
 log = logging.getLogger(__name__)
 
 SCHEMA = """
@@ -40,11 +42,10 @@ class History:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
-        self._conn = sqlite3.connect(str(self.path), check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
-        with self._lock:
-            self._conn.executescript(SCHEMA)
-            self._conn.commit()
+        # A half-written database after a power cut used to raise here, at
+        # construction, so Murmur did not start and nothing said why. The bad
+        # file is moved aside rather than deleted, and the log names it.
+        self._conn = open_store(self.path, SCHEMA)
 
     def add(self, raw, polished, final, mode, duration_ms, app, title,
             status="ok") -> int:
