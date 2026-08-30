@@ -2,6 +2,46 @@
 
 Newest first. What shipped, what failed, and why.
 
+## 2026-08-30 (later) — "hold-to-talk sometimes does not send": found it
+
+Tommy narrowed the report to hold-to-talk specifically, and that was the clue
+that cracked it. **It was a regression introduced with the audio cues.**
+
+To keep the start cue out of the recording, `mute_for()` gated the capture
+buffer for the cue's length plus 400ms of slack — about 490ms from the moment
+the chord went down. Which is exactly when people start talking.
+
+Measured, not guessed. Feeding the fixture through the real pipeline:
+
+| You hold | You said | Murmur got |
+|---|---|---|
+| 1.0s | "Hey, can you add three?" | "You add three" |
+| 2.0s | "Hey can you add three items to the list?" | "You add three items to the list." |
+
+Every dictation lost its opening words. And a short utterance — the whole point
+of push-to-talk — fell entirely inside the muted window, transcribed to nothing,
+and sent nothing at all. Hold-to-talk phrases are short, which is why it showed
+up there and not in hands-free.
+
+**The trade was wrong in both directions.** The cue is a quiet 90ms tone that
+real speech buries, and the only case it could corrupt is a recording of nothing
+but the cue — which the silence guard in `_process` already catches. Dropping
+the user's words to protect against a hallucination on an empty clip is a bad
+bargain.
+
+`mute_for()` now gates only the PRE-ROLL, so a session's done or cancel cue
+still cannot leak into the next session's opening, and an active recording is
+never gated. Verified with the cue mixed into the audio at the level a
+microphone actually picks it up: "Hey, can you add three items to the list?"
+comes back whole.
+
+The 400ms slack was itself a symptom of an earlier honest failure: the output
+latency could not be measured in a room with background noise, so a generous
+margin was chosen. Generous margins on the wrong side of a trade-off are how
+this happened.
+
+295 unit tests, 17/17 system checks.
+
 ## 2026-08-30 — sound packs, orb charge, and why dictations "did not send"
 
 **The "sometimes it does not send" report was diagnosed, not guessed at.**

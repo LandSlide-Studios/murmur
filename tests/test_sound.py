@@ -98,36 +98,54 @@ def test_an_unknown_cue_is_ignored():
 
 # --- the reason the mute exists ---------------------------------------------
 
-def test_muted_audio_is_not_recorded():
-    """The speakers are audible to the microphone, and Whisper hallucinates
-    words from tones — cue-only audio transcribed to "Thanks."."""
+def test_an_active_recording_is_never_muted():
+    """THE regression this file exists for.
+
+    The mute used to gate the recording too. It ran ~490ms from the moment the
+    chord went down — exactly when people start talking — so every dictation
+    lost its opening words ("Hey, can you add three items" came back as "You add
+    three items") and a short utterance vanished entirely, sending nothing.
+
+    A cue is never worth a syllable of the user's speech.
+    """
     r = Recorder(sample_rate=16000)
     r._capturing = True
-    r.mute_for(200)
-    loud = np.full(1600, 0.5, dtype=np.float32)
-    r._callback(loud.reshape(-1, 1), 1600, None, None)
-    assert r.buffer.read_all().size == 0, "audio was recorded while muted"
+    r.mute_for(500)
+    speech = np.full(1600, 0.5, dtype=np.float32)
+    r._callback(speech.reshape(-1, 1), 1600, None, None)
+    assert r.buffer.read_all().size == 1600, "speech was dropped for a cue"
 
 
-def test_capture_resumes_after_the_mute_window():
+def test_a_short_utterance_survives_a_cue():
+    """The worst case: everything said fits inside the old mute window."""
     r = Recorder(sample_rate=16000)
-    r._capturing = True
-    r.mute_for(10)
-    time.sleep(0.05)
-    block = np.full(1600, 0.5, dtype=np.float32)
-    r._callback(block.reshape(-1, 1), 1600, None, None)
-    assert r.buffer.read_all().size == 1600
+    r.begin()
+    r.mute_for(500)
+    for _ in range(6):                      # ~0.6s of speech
+        r._callback(np.full(1600, 0.4, dtype=np.float32).reshape(-1, 1),
+                    1600, None, None)
+    assert r.end().size == 6 * 1600
 
 
-def test_mute_also_keeps_cues_out_of_the_preroll():
-    """The pre-roll is always running, so a cue would land in the NEXT
-    session's audio if it were not muted too."""
+def test_the_mute_still_keeps_cues_out_of_the_preroll():
+    """The pre-roll IS still gated: the done and cancel cues play while idle,
+    and would otherwise sit at the front of the next session's audio."""
     r = Recorder(sample_rate=16000)
     r._capturing = False
     r.mute_for(200)
     block = np.full(1600, 0.5, dtype=np.float32)
     r._callback(block.reshape(-1, 1), 1600, None, None)
     assert r.preroll.read_all().size == 0
+
+
+def test_the_preroll_resumes_after_the_mute():
+    r = Recorder(sample_rate=16000)
+    r._capturing = False
+    r.mute_for(10)
+    time.sleep(0.05)
+    r._callback(np.full(1600, 0.5, dtype=np.float32).reshape(-1, 1),
+                1600, None, None)
+    assert r.preroll.read_all().size == 1600
 
 
 # --- the five packs, ported from Sotto ---

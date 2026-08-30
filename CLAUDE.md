@@ -30,6 +30,10 @@ Rebuild of Wispr Flow's behaviour on a local-only stack. Tommy's own tool, not c
   mid-flight.
 - **The transcript reaches the clipboard BEFORE the comet flies.** A failed
   animation must never be able to cost the user their words.
+- **Never gate an active recording.** `Recorder.mute_for()` touches the
+  pre-roll only. It once gated the capture buffer to keep a cue out of the
+  audio, and cost every dictation its opening words — short utterances sent
+  nothing at all. No cue is worth a syllable of the user's speech.
 - **Never do work inside the keyboard hook callback.** A `WH_KEYBOARD_LL` callback exceeding
   `LowLevelHooksTimeout` (~300ms) is silently unhooked by Windows and the hotkey dies with no
   error. The callback enqueues and returns. Nothing else.

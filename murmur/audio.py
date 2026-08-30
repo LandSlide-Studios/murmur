@@ -140,14 +140,23 @@ class Recorder:
         self._capturing = True
 
     def mute_for(self, ms: int) -> None:
-        """Drop incoming audio for `ms`, starting now.
+        """Keep an audio cue out of the PRE-ROLL for `ms`, starting now.
 
-        Used while an audio cue is playing. The speakers are audible to the
-        microphone, and Whisper hallucinates words from non-speech — a
-        cue-only recording transcribed to "Thanks." Muting costs the ~90ms
-        the cue occupies, which is the moment the chord is being pressed
-        rather than the moment anything is being said. The pre-roll already
-        holds the 400ms before that.
+        This deliberately does NOT touch an active recording. It used to, and
+        that was a serious bug: the mute ran for ~490ms from the moment the
+        chord went down, which is exactly when people start talking. Every
+        dictation lost its opening words — "Hey, can you add three items" came
+        back as "You add three items" — and a short utterance vanished entirely,
+        so nothing was sent at all.
+
+        The trade was wrong in both directions. The cue is a quiet 90ms tone
+        that real speech buries, and the one case it could corrupt — a
+        recording of nothing but the cue — is already caught by the silence
+        guard in app.py. Losing the user's words to protect against a
+        hallucination on an empty clip is a bad bargain.
+
+        The pre-roll is still muted, so the done and cancel cues of one session
+        cannot leak into the next session's opening.
         """
         self._muted_until = time.monotonic() + ms / 1000.0
 
@@ -169,17 +178,19 @@ class Recorder:
     def _callback(self, indata, _frames, _time_info, status):
         if status:
             log.debug("audio status: %s", status)
-        if time.monotonic() < self._muted_until:
-            return                      # an audio cue is playing; do not record it
         block = indata[:, 0] if indata.ndim > 1 else indata
         if self._capturing:
+            # NEVER gated. An active recording is the user talking, and no cue
+            # is worth dropping a syllable of it.
             self.buffer.write(block)
             if self.on_level is not None:
                 try:
                     self.on_level(rms(block))
                 except Exception:
                     log.exception("on_level raised; continuing capture")
-        else:
+        elif time.monotonic() >= self._muted_until:
             # Idle: keep only the rolling pre-roll window. Nothing is stored,
             # nothing leaves this buffer, and it is overwritten continuously.
+            # Muted while a cue sounds, so one session's done tone cannot end up
+            # at the front of the next session's audio.
             self.preroll.write(block)
