@@ -16,7 +16,9 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
-CUES = ("start", "done", "cancel")
+# The full cinematic, adapted from Sotto: acknowledge, swell while the
+# model works, whoosh as the comet leaves, splash as it lands.
+CUES = ("start", "charge", "launch", "arrive", "done", "cancel", "merge")
 
 
 class Sounds:

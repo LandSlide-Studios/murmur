@@ -16,11 +16,50 @@ def test_every_cue_file_exists():
         assert (ASSETS / f"{cue}.wav").exists(), f"{cue}.wav is missing"
 
 
+# Punctuation cues are brief; the two that cover a wait are deliberately longer.
+SUSTAINED = {"charge", "launch"}
+
+
 def test_cues_are_short_enough_to_stay_out_of_the_way():
     for cue in CUES:
         with wave.open(str(ASSETS / f"{cue}.wav"), "rb") as w:
             ms = w.getnframes() / w.getframerate() * 1000
-        assert 40 <= ms <= 400, f"{cue} is {ms:.0f}ms"
+        limit = 700 if cue in SUSTAINED else 400
+        assert 40 <= ms <= limit, f"{cue} is {ms:.0f}ms"
+
+
+def test_the_tonal_cues_keep_their_energy_low():
+    """Sotto's principle: felt, not heard. Energy at 40-600Hz, nothing pierces.
+    The noise cues (launch, arrive) are textures and are exempt."""
+    import numpy as np
+
+    for cue in ("start", "charge", "merge", "cancel"):
+        with wave.open(str(ASSETS / f"{cue}.wav"), "rb") as w:
+            sr = w.getframerate()
+            x = np.frombuffer(w.readframes(w.getnframes()),
+                              dtype=np.int16).astype(np.float64) / 32768
+        spec = np.abs(np.fft.rfft(x * np.hanning(len(x))))
+        freqs = np.fft.rfftfreq(len(x), 1 / sr)
+        total = spec.sum() or 1.0
+        assert spec[(freqs >= 40) & (freqs <= 600)].sum() / total > 0.8, cue
+        assert spec[freqs > 2000].sum() / total < 0.05, f"{cue} pierces"
+
+
+def test_the_anchor_tones_are_f_and_c():
+    """Cues anchor to F and C so repeated use never sounds out of tune with
+    itself. Straight from Sotto's certified set."""
+    import numpy as np
+
+    def peak_hz(cue):
+        with wave.open(str(ASSETS / f"{cue}.wav"), "rb") as w:
+            sr = w.getframerate()
+            x = np.frombuffer(w.readframes(w.getnframes()),
+                              dtype=np.int16).astype(np.float64) / 32768
+        spec = np.abs(np.fft.rfft(x * np.hanning(len(x))))
+        return np.fft.rfftfreq(len(x), 1 / sr)[int(np.argmax(spec))]
+
+    assert abs(peak_hz("start") - 175) < 12, "ack should sit on F3"
+    assert abs(peak_hz("merge") - 131) < 12, "merge should sit on C3"
 
 
 def test_cues_do_not_clip():

@@ -269,6 +269,7 @@ class MurmurApp:
         self._aim = self._cursor_point()
         dur_ms = int(len(pcm) / self.cfg.get("audio.sample_rate") * 1000)
         self.on_state("transcribing")
+        self._cue("charge")
         self._jobs.put((pcm, session, dur_ms))
 
     def _discard(self) -> None:
@@ -374,7 +375,7 @@ class MurmurApp:
                     # The transcript is on the clipboard BEFORE anything moves,
                     # so a failed animation can never cost the user their words.
                     released = self.injector.copy(final)
-                    self._cue("done")
+                    self._cue("launch")
                     log.info("[%s] %s", mode, final)
                     if released:
                         self.on_state("flying", text=final, aim=self._aim)

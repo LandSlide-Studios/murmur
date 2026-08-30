@@ -58,11 +58,12 @@ class UiBridge(QObject):
 
     changed = Signal(str, str, int, int)
 
-    def __init__(self, pill: Pill, comet=None, injector=None):
+    def __init__(self, pill: Pill, comet=None, injector=None, sounds=None):
         super().__init__()
         self.pill = pill
         self.comet = comet
         self.injector = injector
+        self.sounds = sounds
         self.changed.connect(self._on_changed, Qt.QueuedConnection)
 
     def __call__(self, state: str, **kw) -> None:
@@ -95,7 +96,9 @@ class UiBridge(QObject):
         self.pill.apply_state("launching", "")
 
         def landed():
-            # The keystroke fires the instant the comet arrives.
+            # The keystroke and the splash fire the instant the comet arrives.
+            if self.sounds is not None:
+                self.sounds.play("arrive")
             if self.injector is not None:
                 try:
                     self.injector.paste()
@@ -155,6 +158,7 @@ def main() -> int:
     bridge = UiBridge(pill, comet=comet)
     murmur = MurmurApp(cfg, on_state=bridge)
     bridge.injector = murmur.injector
+    bridge.sounds = murmur.sounds
 
     try:
         murmur.start()

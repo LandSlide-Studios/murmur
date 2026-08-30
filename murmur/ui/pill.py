@@ -28,7 +28,8 @@ import ctypes
 import math
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Slot
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
+from PySide6.QtGui import (QColor, QLinearGradient, QPainter, QPainterPath,
+                           QPen)
 from PySide6.QtWidgets import QWidget
 
 from .motion import Spring
@@ -53,8 +54,21 @@ LAUNCH_SIZE = (16, 16)
 # eye, dim enough to ignore. Too faint and it is not an indicator at all.
 IDLE_OPACITY = 0.62
 
-BODY = QColor(14, 14, 16, 238)
-HAIRLINE = QColor(255, 255, 255, 22)
+# Glass, adapted from Sotto's overlay (see NOTICE.md): a translucent dark body
+# with a light top edge and a darker foot, so it reads as a lit pane rather than
+# a flat shape. macOS gets this free from .ultraThinMaterial; Windows has no
+# per-shape equivalent, so it is painted.
+BODY_TOP = QColor(38, 41, 48, 216)
+BODY_BOTTOM = QColor(11, 12, 15, 240)
+HAIRLINE = QColor(255, 255, 255, 30)
+GLASS_SHEEN = QColor(255, 255, 255, 26)
+
+# The rim light: two lines 180 degrees apart gliding the same direction, so
+# when one rides the top the other rides the bottom. Sotto's rim-variants5.html
+# variant 1: a 2.25s lap with each line covering 18% of the perimeter.
+RIM_LAP_S = 2.25
+RIM_LENGTH = 0.18
+RIM_SAMPLES = 26
 
 ACCENT = {
     "armed": QColor("#5B8DEF"),
@@ -107,6 +121,7 @@ class Pill(QWidget):
         self.check = Spring(0.0, stiffness=200, damping=18)
 
         self.sweep = 0.0
+        self.rim = 0.0
         self.shake = 0.0
         self._hold_frames = 0
         self._hardened = False
@@ -290,6 +305,8 @@ class Pill(QWidget):
             self.bars.breathe(dt)
         elif self.state in WORKING:
             self.sweep = (self.sweep + dt * 0.9) % 1.0
+        if self.state in ACTIVE:
+            self.rim = (self.rim + dt / RIM_LAP_S) % 1.0
 
         if self.state in TERMINAL:
             self._hold_frames += 1
@@ -326,9 +343,26 @@ class Pill(QWidget):
 
         path = QPainterPath()
         path.addRoundedRect(rect, radius, radius)
-        p.fillPath(path, BODY)
+
+        body = QLinearGradient(rect.topLeft(), rect.bottomLeft())
+        body.setColorAt(0.0, BODY_TOP)
+        body.setColorAt(1.0, BODY_BOTTOM)
+        p.fillPath(path, body)
+
+        # A sheen down the upper third: the highlight is what sells glass.
+        sheen = QLinearGradient(rect.topLeft(), rect.bottomLeft())
+        sheen.setColorAt(0.0, GLASS_SHEEN)
+        sheen.setColorAt(0.35, QColor(255, 255, 255, 0))
+        sheen.setColorAt(1.0, QColor(255, 255, 255, 0))
+        p.fillPath(path, sheen)
+
         p.setPen(QPen(HAIRLINE, 1))
         p.drawPath(path)
+
+        accent_now = ACCENT.get(self.state, ACCENT["recording"])
+        if self.state in ACTIVE and rect.width() > 16:
+            self._draw_rim(p, path, accent_now)
+
         # Nothing may be drawn outside the capsule.
         p.setClipPath(path)
 
@@ -349,6 +383,32 @@ class Pill(QWidget):
         elif self.state in ("cancelled", "error"):
             self._draw_slash(p, rect, accent)
         p.end()
+
+    def _draw_rim(self, p, path: QPainterPath, accent) -> None:
+        """Twin Tron snakes: two lines 180 degrees apart running the same way.
+
+        Qt's percentAtLength/pointAtPercent are arc-length based, so the heads
+        travel at a constant speed around the capsule rather than racing the
+        straights and crawling the ends — which is exactly the property Sotto
+        needed trimmedPath for.
+        """
+        p.save()
+        p.setBrush(Qt.NoBrush)
+        for offset in (0.0, 0.5):
+            head = (self.rim + offset) % 1.0
+            for i in range(RIM_SAMPLES):
+                a = head - RIM_LENGTH * (i / RIM_SAMPLES)
+                b = head - RIM_LENGTH * ((i + 1) / RIM_SAMPLES)
+                p1 = path.pointAtPercent(a % 1.0)
+                p2 = path.pointAtPercent(b % 1.0)
+                # Bright at the head, erased at the tail: the snake writes
+                # itself forward while the tail rubs out behind it.
+                fade = 1.0 - i / RIM_SAMPLES
+                c = QColor(accent)
+                c.setAlphaF(min(1.0, 0.9 * fade * fade))
+                p.setPen(QPen(c, 1.6 + 1.0 * fade, Qt.SolidLine, Qt.RoundCap))
+                p.drawLine(p1, p2)
+        p.restore()
 
     def _draw_bars(self, p, rect, accent) -> None:
         """Horizontal bars stacked up the capsule, length driven by the mic.

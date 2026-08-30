@@ -46,6 +46,15 @@ it, so the change is one continuous morph.
 There is no text. State is carried by size, colour and motion, which is legible
 from the corner of your eye in a way an 8pt word is not.
 
+While a session is live, a **rim light** runs the capsule's outline: two lines
+180 degrees apart gliding the same direction, so when one rides the top the
+other rides the bottom. A 2.25s lap, each covering 18% of the perimeter — also
+Sotto's, from their `rim-variants5` workbench.
+
+The glass is painted rather than a real backdrop blur. macOS gets that free from
+`.ultraThinMaterial`; Windows has no per-shape equivalent and faking one would
+mean clipping the window to the capsule and resizing it every frame.
+
 It is click-through and never takes focus, so it cannot swallow the paste.
 
 ### The comet
