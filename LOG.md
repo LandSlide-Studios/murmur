@@ -1111,3 +1111,53 @@ now forgets outright when the clock stops, since a decay measured in frames has
 no clock to run on.
 
 538 tests.
+
+## 2026-08-31 - the dictionary: why recognition was not the problem
+
+He reported that Wispr Flow remembers words he corrects and Murmur does not --
+"Jim's Steakout" coming back as "gym Stakeout", "Sidance" spelt wrong every time.
+
+**The recognition machinery was never the problem.** Measured on synthesised
+speech through the app's own transcribe path:
+
+| | latency | result |
+|---|---|---|
+| vocabulary empty | 471 ms | "Jim Stikoud", "Sidence", "PEDS MD" |
+| vocabulary seeded | 292 ms | "Jim's Steakout", "Sidance", "Peds MD" |
+
+Hotwords already reach faster-whisper, already fix exactly the mishearings he
+reported, and cost nothing -- they are FASTER, because the decoder settles
+sooner once it recognises the term. (An earlier measurement suggested hotwords
+cost 3.8s against 180ms. That was synthetic noise making the decoder
+hallucinate, not a real cost. Checking it against real speech is what turned a
+"hotwords are too expensive" conclusion into the opposite one.)
+
+Reading faster-whisper's source pins the mechanism: hotwords are tokenised and
+extended onto the `<|startofprev|>` prompt, capped at `max_length // 2` -- 223
+tokens, which is where the ~224 figure in the tier 4 work came from.
+
+**The actual problem: his vocabulary held four terms and there was no way to add
+a fifth.** Learning could only fire when Murmur happened to OBSERVE a correction
+-- a clipboard copy of edited text, or a UI Automation read-back -- and someone
+dictating into a chat window does not go back and edit it. The Vocabulary panel
+could forget a term and toggle one. It could not add one. The feature that
+biases the decoder for free had no input.
+
+`add_term()` / `add_many()`, and a box in the panel that takes a pasted list. A
+typed term needs no misheard form: the term alone biases the decoder, and asking
+the user to first guess how Whisper will mangle it would make the feature
+useless for the case it exists for. `Right Form = heard as` adds a substitution
+rule too, for a mishearing that is already known.
+
+Hotword-only rows carry an empty `wrong_form`, and `apply()` skips them -- an
+empty alternative in the pattern would match at every position and splice the
+term across the whole transcript.
+
+Also fixed a defect the tier 4+5 gate reported and I had not acted on:
+`_clean_term`'s filter ran before its mapping, so ` 
+ 	` all failed the
+`ord(c) < 32` test and were dropped outright. The branch mapping them to a space
+was dead code, and "Vantage Labs" came back as "VantageLabs" -- a hotword the
+recogniser will never be asked to produce.
+
+552 tests.

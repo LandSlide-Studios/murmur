@@ -178,6 +178,55 @@ class Vocabulary:
                      wrong, right, source, hits)
         return bool(effective)
 
+    def add_term(self, term: str, sounds_like: str | None = None) -> bool:
+        """Add a term the user typed in, rather than one inferred from an edit.
+
+        This is the path that did not exist. Learning could only ever fire when
+        Murmur happened to observe a correction — and someone dictating into a
+        chat window does not go back and edit the text, so a vocabulary that
+        biases the decoder for free stayed almost empty.
+
+        `sounds_like` is optional and usually unnecessary: the term alone is
+        enough to bias recognition, which is what fixes a misheard proper noun.
+        Give it only when a specific mishearing needs rewriting after the fact.
+
+        Typed in means intended, so it is active at once.
+        """
+        term = self._clean_term(term)
+        if not term:
+            return False
+        wrong = (sounds_like or "").strip()
+        if wrong == term:
+            wrong = ""
+
+        now = time.time()
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO terms (wrong_form, term, hit_count, promoted,"
+                " first_seen, last_seen) VALUES (?,?,?,1,?,?)"
+                " ON CONFLICT(wrong_form, term) DO UPDATE SET"
+                "   promoted=1, enabled=1, last_seen=excluded.last_seen",
+                (wrong, term, 1, now, now))
+            self._conn.commit()
+        log.info("vocabulary: %r added by hand%s", term,
+                 f" (sounds like {wrong!r})" if wrong else "")
+        return True
+
+    def add_many(self, terms) -> int:
+        """Bulk entry, one term per line. Returns how many were added."""
+        added = 0
+        for line in terms:
+            line = (line or "").strip()
+            if not line:
+                continue
+            # "Right Form = sounds like" on one line, both halves optional.
+            if "=" in line:
+                right, _, wrong = line.partition("=")
+                added += bool(self.add_term(right, wrong))
+            else:
+                added += bool(self.add_term(line))
+        return added
+
     # --- reads ------------------------------------------------------------
 
     def _active(self) -> list[sqlite3.Row]:
@@ -193,10 +242,15 @@ class Vocabulary:
         Newlines matter most: a term carrying one can open a new line inside a
         prompt and stop looking like a term at all.
         """
+        # The filter has to let whitespace REACH the mapping. It ran first, so
+        # \r \n \t all failed `ord(c) < 32` and were dropped outright — the
+        # branch mapping them to a space was dead code, and a two-word term came
+        # back welded into a hotword that does not exist ("Vantage Labs" became
+        # "VantageLabs", which the recogniser will never be asked to produce).
         cleaned = "".join(
             " " if c in "\r\n\t" else c
             for c in (term or "")
-            if c == " " or not (ord(c) < 32 or ord(c) == 127))
+            if c in " \r\n\t" or not (ord(c) < 32 or ord(c) == 127))
         return " ".join(cleaned.split())[:_TERM_MAX_CHARS]
 
     def hotwords(self, limit: int = HOTWORD_LIMIT) -> list[str]:
@@ -242,6 +296,11 @@ class Vocabulary:
         alternatives = []
         for r in rows:
             wrong = r["wrong_form"]
+            if not wrong:
+                # A hotword-only term: it biases the decoder but has no
+                # substitution rule. An empty alternative would match at every
+                # position and splice the term across the whole transcript.
+                continue
             if wrong in replacements:      # first (longest) wins
                 continue
             replacements[wrong] = r["term"]

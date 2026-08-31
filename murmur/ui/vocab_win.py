@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -43,25 +44,56 @@ class VocabWindow(QWidget):
         header.setSectionResizeMode(HITS, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(ON, QHeaderView.ResizeToContents)
 
+        # Adding a word by hand is the path that did not exist. Learning could
+        # only fire when Murmur happened to observe a correction, and someone
+        # dictating into a chat window does not go back and edit the text -- so
+        # a vocabulary that biases the decoder for free stayed empty.
+        self.entry = QLineEdit()
+        self.entry.setPlaceholderText(
+            "Add a word or name — one per line, or  Right Form = heard as")
+        self.entry.setClearButtonEnabled(True)
+        self.add_btn = QPushButton("Add")
+        self.add_btn.setDefault(True)
+
+        add_row = QHBoxLayout()
+        add_row.addWidget(self.entry, 1)
+        add_row.addWidget(self.add_btn)
+
         self.forget_btn = QPushButton("Forget selected")
         self.hint = QLabel(
-            "Learned from your corrections. Untick Active to stop applying one.")
+            "Words here are given to the recogniser before it listens, so it "
+            "spells them your way.")
         self.hint.setProperty("muted", True)
+        self.hint.setWordWrap(True)
 
         row = QHBoxLayout()
         row.addWidget(self.forget_btn)
         row.addStretch(1)
-        row.addWidget(self.hint)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(10)
+        layout.addLayout(add_row)
         layout.addWidget(self.table)
         layout.addLayout(row)
+        layout.addWidget(self.hint)
 
+        self.add_btn.clicked.connect(self._add)
+        self.entry.returnPressed.connect(self._add)
         self.forget_btn.clicked.connect(self._forget)
         self.table.itemChanged.connect(self._toggled)
         self.reload()
+
+    def _add(self) -> None:
+        text = self.entry.text().strip()
+        if not text:
+            return
+        # Newlines survive a paste into a single-line field on Windows, so a
+        # whole list can go in at once.
+        added = self.vocab.add_many(text.replace("\r", "\n").split("\n"))
+        if added:
+            self.entry.clear()
+            self.reload()
 
     def reload(self) -> None:
         self.table.blockSignals(True)

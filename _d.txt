@@ -1,0 +1,36 @@
+feat: add words to the dictionary by hand
+
+The recognition machinery was never the problem. Measured on synthesised
+speech through the app's own path:
+
+  vocabulary empty    471 ms   "Jim Stikoud"     "Sidence"   "PEDS MD"
+  vocabulary seeded   292 ms   "Jim's Steakout"  "Sidance"   "Peds MD"
+
+Hotwords already reach faster-whisper, already fix exactly the mishearings
+he reported, and cost nothing -- they are faster, because the decoder
+settles sooner once it recognises the term.
+
+The problem was that his vocabulary held four terms, and there was no way
+to add a fifth. Learning could only fire when Murmur happened to OBSERVE a
+correction, and someone dictating into a chat window does not go back and
+edit the text. The Vocabulary panel could forget a term and toggle one; it
+could not add one.
+
+So: Vocabulary.add_term() and add_many(), and a box in the panel that takes
+a pasted list. A typed term needs no misheard form -- the term alone biases
+the decoder, which is what fixes a misheard proper noun, and asking the
+user to first guess how Whisper will mangle it would make the feature
+useless for the case it exists for. Optional "Right Form = heard as" adds a
+substitution rule as well.
+
+A hotword-only row has an empty wrong_form, so apply() skips it: an empty
+alternative in the pattern would match at every position and splice the
+term across the whole transcript.
+
+Also fixes a defect the tier 4+5 gate reported and I had not yet acted on:
+_clean_term's filter ran before its mapping, so \r \n \t all failed the
+ord(c) < 32 test and were dropped outright -- the branch mapping them to a
+space was dead code, and "Vantage Labs" came back as "VantageLabs", a
+hotword the recogniser will never be asked to produce.
+
+552 tests.
