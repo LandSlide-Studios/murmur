@@ -861,8 +861,8 @@ def test_search_escapes_underscore(hist):
 
 
 def test_search_escapes_backslash(hist):
-    _add(hist, final=r"open C:\Users\magli now")
-    _add(hist, final="open C:/Users/magli now")
+    _add(hist, final=r"open C:\Users\example now")
+    _add(hist, final="open C:/Users/example now")
     rows = hist.search("\\")
     assert len(rows) == 1, [r["final_text"] for r in rows]
     rows = hist.search(r"C:\Users")
